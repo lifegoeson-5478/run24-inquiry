@@ -59,7 +59,6 @@ const RESOLUTIONS = [
   ['현장 점검·수리', /방문|기사|수리|점검|AS|교체/],
   ['안내로 마무리', /./], // 위 처리가 하나도 없으면 여기로
 ];
-const textOf = (c) => c.summary || c.first_message || '';
 // 증상은 한 문의에 여러 개를 셀 수 있다.
 const tally = (rules, chats) => rules.map(([label, re]) => [label, chats.filter((c) => re.test(textOf(c))).length])
   .filter(([, v]) => v).sort((a, b) => b[1] - a[1]);
@@ -170,18 +169,31 @@ function renderNav() {
   for (const b of nav.querySelectorAll('[data-group]')) b.onclick = () => go('group', b.dataset.group);
 }
 
-// ── 데이터: 유형/ 태그가 붙은 상담 전체를 한 번에 불러와 화면에서 집계한다 (수만 건 수준).
+// 여러 요청을 limit개씩 동시에 돌린다
+async function pool(tasks, limit = 6) {
+  const out = new Array(tasks.length); let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, async () => { while (i < tasks.length) { const k = i++; out[k] = await tasks[k](); } }));
+  return out;
+}
+function loadFail(error) {
+  document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`;
+  throw error;
+}
+
+// ── 데이터: 집계에 필요한 가벼운 열(날짜·매장·태그)만 먼저 동시에 받고, 요약 문장은 화면에 보일 때 받는다.
 async function loadData() {
-  const rows = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from('chat_list')
-      .select('chat_id, channel_id, opened_at, store, first_message, estimated, summary, device_type')
-      .order('opened_at', { ascending: false }).range(from, from + 999);
-    if (error) { document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`; throw error; }
-    rows.push(...data);
-    const el = document.querySelector('.loading'); if (el) el.textContent = `불러오는 중… ${n(rows.length)}건`;
-    if (data.length < 1000) break;
-  }
+  const { count, error: cErr } = await db.from('chat_list').select('chat_id', { count: 'exact', head: true });
+  if (cErr) loadFail(cErr);
+  let got = 0;
+  const pages = await pool(Array.from({ length: Math.ceil((count || 0) / 1000) }, (_, k) => async () => {
+    const { data, error } = await db.from('chat_list').select('chat_id, channel_id, opened_at, store, estimated, device_type')
+      .order('opened_at', { ascending: false }).order('chat_id').order('device_type').range(k * 1000, k * 1000 + 999);
+    if (error) loadFail(error);
+    got += data.length;
+    const el = document.querySelector('.loading'); if (el) el.textContent = `불러오는 중… ${n(got)} / ${n(count)}건`;
+    return data;
+  }));
+  const rows = pages.flat();
   const [{ data: sync }, { data: actions }] = await Promise.all([
     db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
     db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on'),
@@ -194,7 +206,7 @@ async function loadData() {
     if (!c) {
       const p = kparts(new Date(r.opened_at));
       c = { id: r.chat_id, channel_id: r.channel_id, opened_at: r.opened_at, ms: Date.parse(r.opened_at), store: r.store || NO_STORE,
-        summary: r.summary, first_message: r.first_message, types: [], groups: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
+        types: [], groups: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
       byId.set(r.chat_id, c);
     }
     const tag = normalizeTag(r.device_type);
@@ -215,6 +227,47 @@ async function loadData() {
   const cnt = (p) => S.chats.filter((c) => c.period === p).length;
   if (P.length > 2 && cnt(P[0]) < cnt(P[1]) * 0.3) P = P.slice(1);
   S.periods = P;
+}
+
+// ── 요약 문장: 화면에 보이는 상담만 받아 둔다. 오작동 증상 분석용 요약은 첫 화면 뒤에 한 번에 받는다.
+const TEXT = new Map(); // chat_id → { summary, first_message }
+const textOf = (c) => { const t = TEXT.get(c.id); return t ? t.summary || t.first_message || '' : ''; };
+async function ensureText(chats) {
+  const need = [...new Set(chats.filter((c) => !TEXT.has(c.id)).map((c) => c.id))];
+  if (!need.length) return false;
+  await pool(Array.from({ length: Math.ceil(need.length / 150) }, (_, k) => async () => {
+    const ids = need.slice(k * 150, k * 150 + 150);
+    const { data } = await db.from('chats').select('id, summary, first_message').in('id', ids);
+    for (const r of data || []) TEXT.set(r.id, r);
+    for (const id of ids) if (!TEXT.has(id)) TEXT.set(id, { summary: null, first_message: '' });
+  }));
+  return true;
+}
+let malTextState = 'idle'; // idle → loading → done
+async function loadMalText() {
+  if (malTextState !== 'idle') return;
+  malTextState = 'loading';
+  const { count } = await db.from('chat_list').select('chat_id', { count: 'exact', head: true }).like('device_type', '기기오작동문의%');
+  await pool(Array.from({ length: Math.ceil((count || 0) / 1000) }, (_, k) => async () => {
+    const { data } = await db.from('chat_list').select('chat_id, summary, first_message').like('device_type', '기기오작동문의%')
+      .order('chat_id').range(k * 1000, k * 1000 + 999);
+    for (const r of data || []) TEXT.set(r.chat_id, { summary: r.summary, first_message: r.first_message });
+  }));
+  malTextState = 'done';
+  render();
+}
+// 검색은 서버에서: 검색어가 들어간 상담 ID를 받아 둔다
+const SEARCH = { q: '', ids: null };
+async function searchIds(q) {
+  const safe = q.replace(/[,()*%\\]/g, ' ').trim();
+  if (!safe) return new Set();
+  const out = new Set();
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db.from('chats').select('id').or(`summary.ilike.*${safe}*,first_message.ilike.*${safe}*`).range(from, from + 999);
+    for (const r of data || []) out.add(r.id);
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 
 function countBy(list, keyFn) {
@@ -245,6 +298,9 @@ function render() {
   writeHash();
   renderNav();
   if (S.view === 'home') renderHome(); else renderDetail();
+  const visible = [...document.querySelectorAll('.chat[data-id]')].map((li) => ({ id: li.dataset.id }));
+  ensureText(visible).then((loaded) => { if (loaded) render(); });
+  if (S.q && SEARCH.q !== S.q.trim()) searchIds(S.q.trim()).then((ids) => { SEARCH.ids = ids; SEARCH.q = S.q.trim(); render(); });
 }
 
 // ── 차트와 조각 (흑백)
@@ -340,11 +396,11 @@ function heatmap(chats) {
 
 const tagChip = (t) => `<button class="tag" data-type="${esc(t)}" title="${esc(t)}"><i style="background:${groupColor(groupOf(t))}"></i>${esc(tagLabel(t))}</button>`;
 function chatRow(c) {
-  return `<li class="chat">
+  return `<li class="chat" data-id="${esc(c.id)}">
     <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button>
       <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡</a></div>
-    <p class="chat-text">${esc(c.summary || c.first_message) || '<span class="muted">(고객이 남긴 내용 없음)</span>'}</p>
+    <p class="chat-text">${TEXT.has(c.id) ? esc(textOf(c)) || '<span class="muted">(고객이 남긴 내용 없음)</span>' : '<span class="muted">불러오는 중…</span>'}</p>
     <div class="chat-foot">${c.types.map(tagChip).join('')}${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정</span>' : ''}</div></li>`;
 }
 
@@ -352,6 +408,7 @@ function chatRow(c) {
 function malCard(chats, title = '기기 오작동 증상과 처리') {
   const mal = chats.filter(isMal);
   if (!mal.length) return '';
+  if (malTextState !== 'done') { loadMalText(); return card(title, '상담 요약을 불러오는 중이에요', '<p class="muted">잠시만 기다려 주세요.</p>'); }
   const sym = tally(SYMPTOMS, mal).slice(0, 6), res = tallyFirst(RESOLUTIONS, mal);
   return card(title, `오작동 상담 ${n(mal.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
@@ -427,6 +484,7 @@ function renderHome() {
 // ── 상세: 묶음 하나 / 세부 유형 하나 / 매장 하나 / 전체 상담
 function renderDetail() {
   const view = document.getElementById('view');
+  const typing = document.activeElement?.id === 'q' ? document.activeElement.selectionStart : null; // 다시 그려도 검색창 입력을 이어가게
   const V = S.view, K = S.key;
   const base = S.chats.filter((c) => (V === 'group' ? c.groups.includes(K) : V === 'type' ? c.types.includes(K) : V === 'store' ? c.store === K : true));
   const ranged = base.filter(inRange);
@@ -442,7 +500,7 @@ function renderDetail() {
   const q = S.q.trim();
   const listed = (S.period ? base.filter((c) => c.period === S.period) : ranged)
     .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
-      && (!q || `${c.summary || ''} ${c.first_message || ''} ${c.store}`.includes(q)));
+      && (!q || c.store.includes(q) || (SEARCH.q === q && SEARCH.ids?.has(c.id))));
 
   // 무엇으로 나눠 볼지: 묶음 → 세부 유형, 매장·전체 → 유형 묶음
   const subKey = V === 'group' ? (c) => c.types.filter((t) => groupOf(t) === K) : (c) => c.groups;
@@ -506,8 +564,8 @@ function renderDetail() {
   view.querySelector('#all-stores')?.addEventListener('click', () => { S.allStores = !S.allStores; render(); });
   const qi = view.querySelector('#q');
   let timer;
-  qi.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { S.q = qi.value; S.shown = PAGE; S.qFocus = true; render(); }, 250); };
-  if (S.qFocus) { S.qFocus = false; const el = document.getElementById('q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  qi.oninput = () => { clearTimeout(timer); timer = setTimeout(async () => { S.q = qi.value; S.shown = PAGE; S.qFocus = true; const q2 = S.q.trim(); if (q2) { SEARCH.ids = await searchIds(q2); SEARCH.q = q2; } render(); }, 300); };
+  if (S.qFocus || typing !== null) { S.qFocus = false; const el = document.getElementById('q'); const pos = typing ?? el.value.length; el.focus(); el.setSelectionRange(pos, pos); }
   for (const tr of view.querySelectorAll('.stack-trend')) tr.scrollLeft = tr.scrollWidth;
   if (V === 'type') bindActions(view);
 }
