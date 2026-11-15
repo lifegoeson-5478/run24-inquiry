@@ -67,7 +67,7 @@ button { font: inherit; color: inherit; }
 
 /* 페이지 머리 */
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
-.page-head h1 { font-size: 34px; font-weight: 300; letter-spacing: -0.02em; margin: 0; line-height: 1.2; }
+.page-head h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 0; line-height: 1.2; }
 .page-sub { margin: 6px 0 0; color: var(--soft); font-size: 13px; }
 .crumb { font-size: 13px; color: var(--soft); margin-bottom: 6px; }
 .crumb .linkish { color: var(--soft); }
