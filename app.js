@@ -1,10 +1,9 @@
-// 런24 기기 오작동 문의 대시보드 (index.html) + 관리자 페이지 (admin.html)
+// 런24 상담 유형 대시보드 (index.html) + 관리자 페이지 (admin.html)
 const SUPABASE_URL = 'https://dnazztgpzfpcezsadyaz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_cuPnQYSO5_hIoNvfLovPPw_VFUnx0u4'; // 공개용 키
 const COMPANY_DOMAIN = 'lifegoeson.kr'; // 화면 안내용. 실제 차단은 DB(RLS)에서 한다.
 const CHANNEL_DESK = (channelId, chatId) => `https://desk.channel.io/#/channels/${channelId}/user_chats/${chatId}`;
 const PAGE = 40;
-const UNKNOWN = '세부유형 미지정';
 const NO_STORE = '매장 미지정';
 const ADMIN_PAGE = window.ADMIN_PAGE === true;
 
@@ -67,18 +66,30 @@ const tally = (rules, chats) => rules.map(([label, re]) => [label, chats.filter(
 // 처리 방식은 문의 하나당 먼저 맞는 하나만 센다 (요약 문장 대부분이 '~안내함'으로 끝나서).
 const tallyFirst = (rules, chats) => Object.entries(countBy(chats.filter((c) => textOf(c)), (c) => rules.find(([, re]) => re.test(textOf(c)))[0]));
 
+// ── 유형 묶음: 태그 이름 앞부분으로 비슷한 유형끼리 묶는다 (결제_환불문의/…, 결제문의_포인트 → 결제)
+const GROUPS = { 기기오작동: '기기 오작동', 결제: '결제·환불', 세탁: '세탁·수선', 수거: '수거·배송', 매장이용: '매장 이용', 주차등록: '주차', 기타: '기타 서비스', OB유형: '먼저 연락한 상담 (OB)' };
+const GROUP_COLOR = { 기기오작동: '#0E8C83', 결제: '#3A6EA5', 세탁: '#8E5A9B', 수거: '#B7791F', 매장이용: '#5E8B4F', 주차등록: '#7A8790', 기타: '#B5655A', OB유형: '#A7B3BB' };
+const MAL_GROUP = '기기오작동';
+const groupOf = (tag) => tag.split(/[/_]/)[0].replace(/문의$/, '');
+const groupLabel = (g) => GROUPS[g] || g;
+const groupColor = (g) => GROUP_COLOR[g] || '#A3B0B8';
+const tagColor = (t) => groupColor(groupOf(t));
+const isParent = (t) => S.parents.has(t);
+const tagLabel = (t) => (t.includes('/') ? t.slice(t.indexOf('/') + 1) : isParent(t) ? `${t} (세부 없음)` : t);
+
 // ── 상태. 보는 화면과 필터는 URL 해시에 넣어 링크로 공유할 수 있게 한다.
 const S = {
-  email: '', approver: false, chats: [], actions: [], sync: null, periods: [], typeColor: {},
+  email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(),
   view: 'home', key: '', range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
 };
 const RANGES = { 30: '최근 1개월', 90: '최근 3개월', all: '전체 기간' };
+const VIEWS = ['group', 'type', 'store', 'all'];
 
 function readHash() {
   let hash = location.hash;
   try { if (!/v=/.test(hash)) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
   const h = new URLSearchParams(hash.slice(1));
-  S.view = ['type', 'store', 'all'].includes(h.get('v')) ? h.get('v') : 'home';
+  S.view = VIEWS.includes(h.get('v')) ? h.get('v') : 'home';
   S.key = h.get('k') || '';
   S.range = RANGES[h.get('r')] ? h.get('r') : '90';
   S.period = h.get('p') || ''; S.store = h.get('s') || ''; S.type = h.get('t') || ''; S.q = h.get('q') || '';
@@ -97,7 +108,7 @@ function writeHash() {
 
 // ── 로그인
 function login() {
-  app.innerHTML = `<div class="gate"><h1>런24 기기 오작동 문의</h1>
+  app.innerHTML = `<div class="gate"><h1>런24 상담 유형</h1>
     <p>회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
     <button class="btn primary" id="go">구글로 로그인</button></div>`;
   try { if (/v=/.test(location.hash)) sessionStorage.setItem('run24-hash', location.hash); } catch {}
@@ -125,7 +136,7 @@ async function shell(email) {
   }
   app.innerHTML = `
     <header class="top">
-      <a class="brand" href="${ADMIN_PAGE ? './' : '#'}" id="home">런24 기기 오작동 문의</a>
+      <a class="brand" href="${ADMIN_PAGE ? './' : '#'}" id="home">런24 상담 유형</a>
       <div class="top-right">
         ${ADMIN_PAGE ? '<a href="./">대시보드</a>' : S.approver ? '<a href="admin.html">관리자</a>' : ''}
         <span class="who">${esc(email.split('@')[0])}</span>
@@ -140,7 +151,7 @@ async function shell(email) {
   render();
 }
 
-// ── 데이터: 오작동 문의 전체를 한 번에 불러와 화면에서 집계한다 (수천 건 수준).
+// ── 데이터: 유형/ 태그가 붙은 상담 전체를 한 번에 불러와 화면에서 집계한다 (수만 건 수준).
 async function loadData() {
   const rows = [];
   for (let from = 0; ; from += 1000) {
@@ -149,6 +160,7 @@ async function loadData() {
       .order('opened_at', { ascending: false }).range(from, from + 999);
     if (error) { document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`; throw error; }
     rows.push(...data);
+    const el = document.querySelector('.loading'); if (el) el.textContent = `불러오는 중… ${n(rows.length)}건`;
     if (data.length < 1000) break;
   }
   const [{ data: sync }, { data: actions }] = await Promise.all([
@@ -157,19 +169,21 @@ async function loadData() {
   ]);
   S.sync = sync; S.actions = actions || [];
 
-  const byId = new Map();
+  const byId = new Map(), tags = new Set();
   for (const r of rows) {
     let c = byId.get(r.chat_id);
     if (!c) {
       const p = kparts(new Date(r.opened_at));
       c = { id: r.chat_id, channel_id: r.channel_id, opened_at: r.opened_at, ms: Date.parse(r.opened_at), store: r.store || NO_STORE,
-        summary: r.summary, first_message: r.first_message, types: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
+        summary: r.summary, first_message: r.first_message, types: [], groups: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
       byId.set(r.chat_id, c);
     }
-    c.types.push(r.device_type);
+    c.types.push(r.device_type); tags.add(r.device_type);
+    const g = groupOf(r.device_type); if (!c.groups.includes(g)) c.groups.push(g);
     if (r.estimated) c.estimated = true;
   }
   S.chats = [...byId.values()].sort((a, b) => b.ms - a.ms);
+  S.parents = new Set([...tags].filter((t) => !t.includes('/') && [...tags].some((o) => o.startsWith(t + '/'))));
 
   // 보름 구간: 수집 시작 보름은 일부 날짜만 있어 낮게 보이므로, 다음 보름의 30% 미만이면 뺀다.
   const now = periodOf(new Date());
@@ -178,11 +192,6 @@ async function loadData() {
   const cnt = (p) => S.chats.filter((c) => c.period === p).length;
   if (P.length > 2 && cnt(P[0]) < cnt(P[1]) * 0.3) P = P.slice(1);
   S.periods = P;
-
-  // 유형 색: 많은 순으로 6개까지 고유색, 나머지는 회색
-  const typeTotals = countBy(S.chats, (c) => c.types);
-  const PALETTE = ['#0E8C83', '#3A6EA5', '#B7791F', '#8E5A9B', '#5E8B4F', '#B5655A'];
-  Object.keys(typeTotals).filter((t) => t !== UNKNOWN).slice(0, 6).forEach((t, i) => (S.typeColor[t] = PALETTE[i]));
 }
 
 function countBy(list, keyFn) {
@@ -190,10 +199,10 @@ function countBy(list, keyFn) {
   for (const x of list) for (const k of [].concat(keyFn(x))) m[k] = (m[k] || 0) + 1;
   return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]));
 }
-const colorOf = (t) => S.typeColor[t] || '#A3B0B8';
 const inRange = (c) => S.range === 'all' || c.ms >= Date.now() - Number(S.range) * 86_400_000;
+const isMal = (c) => c.groups.includes(MAL_GROUP);
+const sortGroups = (entries) => entries.sort((a, b) => (a[0] === 'OB유형') - (b[0] === 'OB유형') || b[1] - a[1]);
 
-// 지난 보름(완료)과 그 전 보름 비교. 증감은 문장으로 쓴다.
 function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
 function changeWords(now, before) {
   const d = now - before;
@@ -206,7 +215,6 @@ function go(view, key = '') {
   Object.assign(S, { view, key, period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false });
   render(); scrollTo({ top: 0 });
 }
-
 function render() {
   writeHash();
   if (S.view === 'home') renderHome(); else renderDetail();
@@ -216,13 +224,14 @@ function render() {
 const rangeSelect = () => `<label class="range">기간 <select id="range">${Object.entries(RANGES).map(([k, v]) =>
   `<option value="${k}" ${S.range === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
 
-function bars(entries, { max, onKey, color, unit = '건', dim } = {}) {
-  const top = max ?? Math.max(1, ...entries.map(([, v]) => v));
+// entries: [[key, value]], label/color는 key로 계산
+function bars(entries, { onKey, color, label = (k) => k, dim, title } = {}) {
+  const top = Math.max(1, ...entries.map(([, v]) => v));
   return `<ul class="bars">${entries.map(([k, v]) => `<li>
-    ${onKey ? `<button class="bar-row" data-${onKey}="${esc(k)}">` : '<div class="bar-row">'}
-      <span class="bar-label ${dim && dim(k) ? 'dim' : ''}">${esc(k)}</span>
+    ${onKey ? `<button class="bar-row" data-${onKey}="${esc(k)}" ${title ? `title="${esc(title(k))}"` : ''}>` : '<div class="bar-row">'}
+      <span class="bar-label ${dim && dim(k) ? 'dim' : ''}">${esc(label(k))}</span>
       <span class="bar-track"><span class="bar-fill" style="width:${(v / top) * 100}%;background:${color ? color(k) : 'var(--mint)'}"></span></span>
-      <span class="bar-val">${n(v)}${unit}</span>
+      <span class="bar-val">${n(v)}건</span>
     ${onKey ? '</button>' : '</div>'}</li>`).join('')}</ul>`;
 }
 
@@ -243,34 +252,56 @@ function heatmap(chats) {
   </div>`;
 }
 
-function trend(chats, { actPeriods = new Set(), clickable = true } = {}) {
+function trend(chats, { actPeriods = new Set() } = {}) {
   const P = S.periods, cur = P.at(-1);
   const m = countBy(chats, (c) => c.period);
   const max = Math.max(1, ...P.map((p) => m[p] || 0));
-  return `<div class="trend" role="list">${P.map((p) => `<${clickable ? 'button' : 'div'} role="listitem" class="t-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" ${clickable ? `data-period="${p}"` : ''}
+  return `<div class="trend" role="list">${P.map((p) => `<button role="listitem" class="t-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}"
       title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${m[p] || 0}건${actPeriods.has(p) ? ' · 개선 조치' : ''}">
       <span class="t-v">${m[p] || 0}</span>
       <span class="t-bar" style="height:${((m[p] || 0) / max) * 100}%"></span>
       <span class="t-l">${shortLabel(p)}${actPeriods.has(p) ? '<i class="t-flag" aria-label="개선 조치">●</i>' : ''}</span>
-    </${clickable ? 'button' : 'div'}>`).join('')}</div>`;
+    </button>`).join('')}</div>`;
 }
 
-function chatRow(c, { showType = true } = {}) {
+const tagChip = (t) => `<button class="tag" data-type="${esc(t)}" style="--c:${tagColor(t)}" title="${esc(t)}">${esc(tagLabel(t))}</button>`;
+function chatRow(c) {
   return `<li class="chat">
     <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button></div>
     <p class="chat-text">${esc(c.summary || c.first_message) || '<span class="muted">(고객이 남긴 내용 없음)</span>'}</p>
     <div class="chat-foot">
-      ${showType ? c.types.map((t) => `<button class="tag" data-type="${esc(t)}" style="--c:${colorOf(t)}">${esc(t)}</button>`).join('') : ''}
+      ${c.types.map(tagChip).join('')}
       ${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정 유형</span>' : ''}
       <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡에서 보기</a>
     </div></li>`;
 }
 
+// 기기 오작동 문의만 골라 증상과 처리 방식을 보여준다 (규칙이 오작동 상담에 맞춰져 있어서).
+function malPanel(chats, heading = '기기 오작동: 증상과 처리') {
+  const mal = chats.filter(isMal);
+  if (!mal.length) return '';
+  const sym = tally(SYMPTOMS, mal).slice(0, 7), res = tallyFirst(RESOLUTIONS, mal);
+  return `<section class="panel">
+    <h2>${heading}</h2>
+    <p class="sub">오작동 문의 ${n(mal.length)}건의 상담 요약에서 찾았어요. 증상은 한 문의에 여러 개일 수 있어요.</p>
+    <h3>고객이 겪은 증상</h3>${sym.length ? bars(sym) : '<p class="muted">찾은 증상이 없어요.</p>'}
+    <h3>어떻게 처리했나요</h3>${res.length ? bars(res, { color: () => 'var(--slate)' }) : '<p class="muted">-</p>'}
+  </section>`;
+}
+
 function bindCommon(root) {
   root.querySelector('#range')?.addEventListener('change', (e) => { S.range = e.target.value; S.shown = PAGE; render(); });
+  for (const b of root.querySelectorAll('[data-group]')) b.onclick = () => go('group', b.dataset.group);
   for (const b of root.querySelectorAll('[data-type]')) b.onclick = () => go('type', b.dataset.type);
   for (const b of root.querySelectorAll('[data-store]')) b.onclick = () => go('store', b.dataset.store);
+}
+
+// 두 기간 사이 증감이 가장 큰 세부 유형 (상위 태그 제외)
+function movers(listA, listB) {
+  const a = countBy(listA, (c) => c.types), b = countBy(listB, (c) => c.types);
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((t) => !isParent(t))
+    .map((t) => [t, (a[t] || 0) - (b[t] || 0)]).sort((x, y) => y[1] - x[1]);
 }
 
 // ── 첫 화면
@@ -278,168 +309,174 @@ function renderHome() {
   const view = document.getElementById('view');
   const { cur, last, prev } = halves();
   const all = S.chats, ranged = all.filter(inRange);
-  const byP = (p, list = all) => list.filter((c) => c.period === p);
-  const curN = byP(cur).length, lastN = byP(last).length, prevN = byP(prev).length;
+  const byP = (p) => all.filter((c) => c.period === p);
+  const curN = byP(cur).length, lastN = byP(last).length;
 
-  // 이번 보름 진행 속도: 지난 날짜 수 대비
   const today = kparts(new Date());
   const startDay = cur.endsWith('01') ? 1 : 16;
   const lenDays = cur.endsWith('01') ? 15 : new Date(+today.y, +today.m, 0).getDate() - 15;
   const elapsed = today.d - startDay + 1;
   const projected = Math.round((curN / elapsed) * lenDays);
 
-  const typeChange = Object.keys(countBy(all, (c) => c.types)).filter((t) => t !== UNKNOWN)
-    .map((t) => [t, byP(last).filter((c) => c.types.includes(t)).length - byP(prev).filter((c) => c.types.includes(t)).length])
-    .sort((a, b) => b[1] - a[1]);
-  const rose = typeChange[0], fell = typeChange.at(-1);
+  const mv = movers(byP(last), byP(prev));
+  const rose = mv[0], fell = mv.at(-1);
   const storeTotals = countBy(ranged.filter((c) => c.store !== NO_STORE), (c) => c.store);
   const [topStore, topStoreN] = Object.entries(storeTotals)[0] || [];
-  const topStoreType = topStore ? Object.entries(countBy(ranged.filter((c) => c.store === topStore), (c) => c.types))[0] : null;
+  const topStoreTag = topStore ? Object.entries(countBy(ranged.filter((c) => c.store === topStore), (c) => c.types))[0] : null;
 
-  const typeTotals = countBy(ranged, (c) => c.types);
-  const typeEntries = Object.entries(typeTotals).sort((a, b) => (a[0] === UNKNOWN) - (b[0] === UNKNOWN) || b[1] - a[1]);
+  const groupTotals = sortGroups(Object.entries(countBy(ranged, (c) => c.groups)));
+  const groupMax = Math.max(1, ...groupTotals.map(([, v]) => v));
   const storeEntries = Object.entries(storeTotals).slice(0, 10);
-  const symptoms = tally(SYMPTOMS, ranged).slice(0, 6);
-  const resolutions = tallyFirst(RESOLUTIONS, ranged);
 
   view.innerHTML = `
     <section class="brief">
       <p class="brief-when">${periodLabel(cur)} · ${elapsed}일째</p>
-      <h1 class="brief-head">이번 보름 오작동 문의는 지금까지 <b>${n(curN)}건</b>이에요.
+      <h1 class="brief-head">이번 보름 들어온 상담은 지금까지 <b>${n(curN)}건</b>이에요.
         ${!lastN ? '' : elapsed >= lenDays
           ? `지난 보름(${n(lastN)}건)보다 ${curN === lastN ? '같아요' : `${n(Math.abs(curN - lastN))}건 ${curN > lastN ? '많아요' : '적어요'}`}.`
           : elapsed >= 3 ? `이 속도면 ${n(projected)}건쯤으로, 지난 보름(${n(lastN)}건)보다 ${projected > lastN ? '많을' : projected < lastN ? '적을' : '비슷할'} 것 같아요.` : ''}</h1>
       <ul class="brief-points">
-        ${rose && rose[1] > 0 ? `<li>지난 보름 가장 많이 늘어난 건 <button class="linkish strong" data-type="${esc(rose[0])}">${esc(rose[0])}</button>예요. 그 전 보름보다 ${n(rose[1])}건 늘었어요.</li>` : ''}
-        ${fell && fell[1] < 0 ? `<li>가장 많이 줄어든 건 <button class="linkish strong" data-type="${esc(fell[0])}">${esc(fell[0])}</button>예요. ${n(-fell[1])}건 줄었어요.</li>` : ''}
-        ${topStore ? `<li>${RANGES[S.range]} 문의가 가장 많은 매장은 <button class="linkish strong" data-store="${esc(topStore)}">${esc(topStore)}</button>이에요. ${n(topStoreN)}건 중 ${esc(topStoreType?.[0] ?? '')}가 ${n(topStoreType?.[1])}건이에요.</li>` : ''}
+        ${rose && rose[1] > 0 ? `<li>지난 보름 가장 많이 늘어난 건 ${groupLabel(groupOf(rose[0]))}의 <button class="linkish strong" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>예요. 그 전 보름보다 ${n(rose[1])}건 늘었어요.</li>` : ''}
+        ${fell && fell[1] < 0 ? `<li>가장 많이 줄어든 건 ${groupLabel(groupOf(fell[0]))}의 <button class="linkish strong" data-type="${esc(fell[0])}">${esc(tagLabel(fell[0]))}</button>예요. ${n(-fell[1])}건 줄었어요.</li>` : ''}
+        ${topStore ? `<li>${RANGES[S.range]} 상담이 가장 많은 매장은 <button class="linkish strong" data-store="${esc(topStore)}">${esc(topStore)}</button>이에요. ${n(topStoreN)}건 중 ${esc(tagLabel(topStoreTag?.[0] ?? ''))}가 ${n(topStoreTag?.[1])}건이에요.</li>` : ''}
       </ul>
       ${S.sync?.last_error ? `<p class="warn">최근 갱신에 실패해서 숫자가 최신이 아닐 수 있어요. (${esc(S.sync.last_error)})</p>` : ''}
     </section>
 
     <div class="toolbar">${rangeSelect()}<span class="muted">${n(ranged.length)}건 · 마지막 갱신 ${S.sync?.last_synced_at ? kst(S.sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'} (매일 새벽 4시)</span></div>
 
+    <section class="panel wide">
+      <h2>어떤 상담이 많나요</h2>
+      <p class="sub">비슷한 유형끼리 묶었어요. 묶음을 누르면 세부 유형과 매장, 시간대를 볼 수 있어요. 한 상담에 유형이 여러 개면 각각 세요.</p>
+      <ul class="groups">${groupTotals.map(([g, v]) => {
+        const subs = Object.entries(countBy(ranged.filter((c) => c.groups.includes(g)), (c) => c.types.filter((t) => groupOf(t) === g))).slice(0, 4);
+        return `<li><button class="group-row" data-group="${esc(g)}">
+          <span class="g-name"><i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}</span>
+          <span class="bar-track"><span class="bar-fill" style="width:${(v / groupMax) * 100}%;background:${groupColor(g)}"></span></span>
+          <span class="bar-val">${n(v)}건</span>
+          <span class="g-subs">${subs.map(([t, k]) => `${esc(tagLabel(t))} ${n(k)}`).join(' · ')}</span>
+        </button></li>`;
+      }).join('')}</ul>
+    </section>
+
     <div class="grid">
       <section class="panel">
-        <h2>어떤 기기 문의가 많나요</h2>
-        <p class="sub">유형을 누르면 추이, 매장, 증상을 자세히 볼 수 있어요.</p>
-        ${bars(typeEntries, { onKey: 'type', color: colorOf, dim: (k) => k === UNKNOWN })}
-      </section>
-      <section class="panel">
         <h2>어느 매장에서 많이 생기나요</h2>
-        <p class="sub">막대 색은 그 매장에서 많은 유형이에요.</p>
+        <p class="sub">막대 색은 그 매장 상담의 유형 묶음 구성이에요.</p>
         <ul class="stores">${storeEntries.map(([s, v]) => {
-          const comp = Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.types));
-          const top = storeEntries[0][1];
+          const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
           return `<li><button class="store-row" data-store="${esc(s)}">
             <span class="bar-label">${esc(s)}</span>
-            <span class="stack" style="width:${(v / top) * 100}%">${comp.map(([t, k]) => `<i style="flex:${k};background:${colorOf(t)}" title="${esc(t)} ${k}건"></i>`).join('')}</span>
+            <span class="stack" style="width:${(v / storeEntries[0][1]) * 100}%">${comp.map(([g, k]) => `<i style="flex:${k};background:${groupColor(g)}" title="${esc(groupLabel(g))} ${k}건"></i>`).join('')}</span>
             <span class="bar-val">${n(v)}건</span></button></li>`;
         }).join('')}</ul>
-        <button class="linkish" id="all-chats">전체 문의 보기</button>
+        <p class="legend">${groupTotals.slice(0, 7).map(([g]) => `<span><i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}</span>`).join('')}</p>
       </section>
       <section class="panel">
         <h2>언제 많이 생기나요</h2>
-        <p class="sub">요일과 시간대별 문의 수예요. 진할수록 많아요.</p>
+        <p class="sub">요일과 시간대별 상담 수예요. 진할수록 많아요.</p>
         ${heatmap(ranged)}
       </section>
+      ${malPanel(ranged)}
       <section class="panel">
-        <h2>고객이 겪은 증상</h2>
-        <p class="sub">상담 요약에서 찾은 증상이에요. 한 문의에 여러 개가 있을 수 있어요.</p>
-        ${symptoms.length ? bars(symptoms) : '<p class="muted">요약이 아직 없어요.</p>'}
-        <h3>어떻게 처리했나요</h3>
-        ${resolutions.length ? bars(resolutions, { color: () => 'var(--slate)' }) : ''}
+        <h2>최근 들어온 상담</h2>
+        <ul class="chats compact">${all.slice(0, 6).map(chatRow).join('')}</ul>
+        <button class="btn" id="more-chats">전체 상담 보기</button>
       </section>
-    </div>
-
-    <section class="panel wide">
-      <h2>최근 들어온 문의</h2>
-      <ul class="chats">${all.slice(0, 12).map((c) => chatRow(c)).join('')}</ul>
-      <button class="btn" id="more-chats">문의 더 보기</button>
-    </section>`;
+    </div>`;
 
   bindCommon(view);
-  view.querySelector('#all-chats').onclick = () => go('all');
   view.querySelector('#more-chats').onclick = () => go('all');
 }
 
-// ── 상세: 유형 하나 / 매장 하나 / 전체 문의
+// ── 상세: 묶음 하나 / 세부 유형 하나 / 매장 하나 / 전체 상담
 function renderDetail() {
   const view = document.getElementById('view');
-  const isType = S.view === 'type', isStore = S.view === 'store';
-  const base = S.chats.filter((c) => (isType ? c.types.includes(S.key) : isStore ? c.store === S.key : true));
+  const V = S.view, K = S.key;
+  const base = S.chats.filter((c) => (V === 'group' ? c.groups.includes(K) : V === 'type' ? c.types.includes(K) : V === 'store' ? c.store === K : true));
   const ranged = base.filter(inRange);
   const { cur, last, prev } = halves();
   const cntP = (p) => base.filter((c) => c.period === p).length;
-  const title = isType ? S.key : isStore ? S.key : '전체 문의';
+  const title = V === 'group' ? groupLabel(K) : V === 'type' ? tagLabel(K) : V === 'store' ? K : '전체 상담';
+  const crumb = V === 'type' ? `<button class="linkish" data-group="${esc(groupOf(K))}">${esc(groupLabel(groupOf(K)))}</button> <span aria-hidden="true">/</span> 세부 유형`
+    : V === 'group' ? '유형 묶음' : V === 'store' ? '매장' : '상담';
+  const color = V === 'group' ? groupColor(K) : V === 'type' ? tagColor(K) : '';
 
-  const acts = isType ? S.actions.filter((a) => a.device_type === S.key).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
+  const acts = V === 'type' ? S.actions.filter((a) => a.device_type === K).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
   const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
 
-  // 목록 필터: 보름 막대, 매장(유형 화면) 또는 유형(매장 화면), 검색어
   const q = S.q.trim();
   const listed = (S.period ? base.filter((c) => c.period === S.period) : ranged)
     .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
       && (!q || `${c.summary || ''} ${c.first_message || ''} ${c.store}`.includes(q)));
 
-  const side = isType
-    ? (() => {
-      const st = Object.entries(countBy(ranged, (c) => c.store)).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
-      return `<h3>매장 순위</h3>${bars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
-        ${st.length > 10 ? `<button class="linkish" id="all-stores">${S.allStores ? '접기' : `${st.length}곳 모두 보기`}</button>` : ''}`;
-    })()
-    : `<h3>유형 구성</h3>${bars(Object.entries(countBy(ranged, (c) => c.types)), { onKey: 'filter-type', color: colorOf, dim: (k) => k === UNKNOWN })}`;
-
-  const symptoms = tally(SYMPTOMS, ranged).slice(0, 6), resolutions = tallyFirst(RESOLUTIONS, ranged);
+  // 왼쪽 패널: 무엇으로 나눠 볼지
+  let side;
+  if (V === 'group') {
+    const subs = Object.entries(countBy(ranged, (c) => c.types.filter((t) => groupOf(t) === K)));
+    side = `<h2>세부 유형</h2><p class="sub">누르면 그 유형만 자세히 볼 수 있어요.</p>
+      ${bars(subs, { onKey: 'type', color: tagColor, label: tagLabel, dim: isParent, title: (k) => k })}`;
+  } else if (V === 'all') {
+    side = `<h2>유형 묶음</h2>${bars(sortGroups(Object.entries(countBy(ranged, (c) => c.groups))), { onKey: 'group', color: groupColor, label: groupLabel })}`;
+  } else if (V === 'store') {
+    side = `<h2>이 매장의 상담 유형</h2><p class="sub">누르면 아래 목록을 그 유형으로 거를 수 있어요.</p>
+      ${bars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 12), { onKey: 'filter-type', color: tagColor, label: tagLabel, dim: isParent, title: (k) => k })}`;
+  }
+  const storeList = (() => {
+    const st = Object.entries(countBy(ranged, (c) => c.store)).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
+    return `<h2>매장 순위</h2><p class="sub">누르면 아래 목록을 그 매장으로 거를 수 있어요.</p>
+      ${bars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
+      ${st.length > 10 ? `<button class="linkish" id="all-stores">${S.allStores ? '접기' : `${n(st.length)}곳 모두 보기`}</button>` : ''}`;
+  })();
 
   view.innerHTML = `
-    <nav class="crumb"><a href="#" id="back">전체 보기</a> <span aria-hidden="true">/</span> ${isType ? '유형' : isStore ? '매장' : '문의'}</nav>
+    <nav class="crumb"><a href="#" id="back">전체 보기</a> <span aria-hidden="true">/</span> ${crumb}</nav>
     <section class="detail-head">
+      ${color ? `<span class="swatch" style="background:${color}" aria-hidden="true"></span>` : ''}
       <h1>${esc(title)}</h1>
-      <p>${RANGES[S.range]} <b>${n(ranged.length)}건</b>${S.view !== 'all' ? ` (전체의 ${Math.round((ranged.length / Math.max(1, S.chats.filter(inRange).length)) * 100)}%)` : ''}.
+      ${V === 'type' ? `<p class="fullname">${esc(K)}</p>` : ''}
+      <p>${RANGES[S.range]} <b>${n(ranged.length)}건</b>${V !== 'all' ? ` (전체 상담의 ${Math.round((ranged.length / Math.max(1, S.chats.filter(inRange).length)) * 100)}%)` : ''}.
         지난 보름(${periodLabel(last)})은 ${n(cntP(last))}건으로 ${changeWords(cntP(last), cntP(prev))}.
         이번 보름은 지금까지 ${n(cntP(cur))}건이에요.</p>
-      ${isType && S.typeColor[S.key] ? `<span class="swatch" style="background:${colorOf(S.key)}" aria-hidden="true"></span>` : ''}
     </section>
     <div class="toolbar">${rangeSelect()}</div>
 
     <section class="panel wide">
       <h2>보름별 추이</h2>
-      <p class="sub">막대를 누르면 그 보름의 문의만 아래에 보여요. 흐린 막대는 아직 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}</p>
+      <p class="sub">막대를 누르면 그 보름의 상담만 아래에 보여요. 빗금 막대는 아직 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}</p>
       ${trend(base, { actPeriods })}
-      ${isType ? actionsBlock(base, acts) : ''}
+      ${V === 'type' ? actionsBlock(base, acts) : ''}
     </section>
 
     <div class="grid">
-      <section class="panel">${side}</section>
+      ${side ? `<section class="panel">${side}</section>` : ''}
+      ${V !== 'store' ? `<section class="panel">${storeList}</section>` : ''}
       <section class="panel">
-        <h3>고객이 겪은 증상</h3>${symptoms.length ? bars(symptoms) : '<p class="muted">찾은 증상이 없어요.</p>'}
-        <h3>어떻게 처리했나요</h3>${resolutions.length ? bars(resolutions, { color: () => 'var(--slate)' }) : '<p class="muted">-</p>'}
+        <h2>언제 많이 생기나요</h2>
+        ${heatmap(ranged)}
       </section>
-      <section class="panel">
-        <h3>언제 많이 생기나요</h3>${heatmap(ranged)}
-      </section>
+      ${malPanel(ranged, V === 'group' && K === MAL_GROUP || V === 'type' && groupOf(K) === MAL_GROUP ? '증상과 처리' : '기기 오작동: 증상과 처리')}
     </div>
 
     <section class="panel wide" id="list">
-      <h2>문의 ${n(listed.length)}건</h2>
+      <h2>상담 ${n(listed.length)}건</h2>
       <div class="filters">
-        <input type="search" id="q" value="${esc(q)}" placeholder="내용으로 찾기 (예: 탈수, 문 안 열림)" aria-label="문의 내용으로 찾기">
+        <input type="search" id="q" value="${esc(q)}" placeholder="내용으로 찾기 (예: 탈수, 환불, 입고)" aria-label="상담 내용으로 찾기">
         ${S.period ? `<button class="pill" data-clear="period">${periodLabel(S.period)} ✕</button>` : ''}
         ${S.store ? `<button class="pill" data-clear="store">${esc(S.store)} ✕</button>` : ''}
-        ${S.type ? `<button class="pill" data-clear="type">${esc(S.type)} ✕</button>` : ''}
+        ${S.type ? `<button class="pill" data-clear="type">${esc(tagLabel(S.type))} ✕</button>` : ''}
       </div>
-      ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map((c) => chatRow(c, { showType: !isType })).join('')}</ul>
+      ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map(chatRow).join('')}</ul>
         ${listed.length > S.shown ? `<button class="btn" id="more">${n(listed.length - S.shown)}건 더 보기</button>` : ''}`
-        : '<p class="muted">조건에 맞는 문의가 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
+        : '<p class="muted">조건에 맞는 상담이 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
     </section>`;
 
   bindCommon(view);
   view.querySelector('#back').onclick = (e) => { e.preventDefault(); go('home'); };
-  const relist = () => { S.shown = PAGE; render(); };
-  for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? '' : b.dataset.period; relist(); view.querySelector('#list')?.scrollIntoView({ behavior: 'smooth' }); };
-  for (const b of view.querySelectorAll('[data-filter-store]')) b.onclick = () => { S.store = S.store === b.dataset.filterStore ? '' : b.dataset.filterStore; relist(); document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
-  for (const b of view.querySelectorAll('[data-filter-type]')) b.onclick = () => { S.type = S.type === b.dataset.filterType ? '' : b.dataset.filterType; relist(); document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
+  const relist = (scroll) => { S.shown = PAGE; render(); if (scroll) document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
+  for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? '' : b.dataset.period; relist(true); };
+  for (const b of view.querySelectorAll('[data-filter-store]')) b.onclick = () => { S.store = S.store === b.dataset.filterStore ? '' : b.dataset.filterStore; relist(true); };
+  for (const b of view.querySelectorAll('[data-filter-type]')) b.onclick = () => { S.type = S.type === b.dataset.filterType ? '' : b.dataset.filterType; relist(true); };
   for (const b of view.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = ''; relist(); };
   view.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; render(); });
   view.querySelector('#all-stores')?.addEventListener('click', () => { S.allStores = !S.allStores; render(); });
@@ -448,7 +485,7 @@ function renderDetail() {
   qi.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { S.q = qi.value; S.shown = PAGE; S.qFocus = true; render(); }, 250); };
   if (S.qFocus) { S.qFocus = false; const el = document.getElementById('q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   const tr = view.querySelector('.trend'); tr.scrollLeft = tr.scrollWidth;
-  if (isType) bindActions(view);
+  if (V === 'type') bindActions(view);
 }
 
 // ── 개선 조치 (유형 화면)
