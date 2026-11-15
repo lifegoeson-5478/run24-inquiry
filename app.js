@@ -691,10 +691,10 @@ function renderHome() {
   view.innerHTML = `
     ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${RANGES[S.range]} ${n(ranged.length)}건`)}
     <section class="kpis">
-      <div class="kpi"><p>이번 보름 상담</p><b>${n(curN)}</b><span class="kpi-note">${periodLabel(cur)}, 진행 중</span></div>
+      <div class="kpi"><p>이번 보름 상담</p><b>${n(curN)}</b><span class="delta flat">진행 중</span><span class="kpi-note">${periodLabel(cur)}</span></div>
       <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN, { tip: cmp(lastN, prevN) })}<span class="kpi-note">그 전 보름 대비</span></div>
       <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
-        ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '모든 세부 유형 중 가장 많이 늘었어요') }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
+        ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '모든 세부 유형 중 가장 많이 늘었어요') }) : '<span class="delta-slot"></span>'}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
       <div class="kpi kpi-focus" id="focus-kpi" title="눌러서 지켜볼 유형을 바꿀 수 있어요">
         <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
         <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `위의 ${focusShare}%는 ${RANGES[S.range]} 전체 상담 중 비중이에요`) })}
@@ -756,7 +756,7 @@ function renderDetail() {
     `${hbars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
      ${st.length > 10 ? `<button class="linkish more-link" id="all-stores">${S.allStores ? '접기' : `${n(st.length)}곳 모두 보기`}</button>` : ''}`);
 
-  const kpi = (label, val, extra = '', note = '') => `<div class="kpi"><p>${label}</p><b>${val}</b>${extra}<span class="kpi-note">${note}</span></div>`;
+  const kpi = (label, val, extra = '', note = '') => `<div class="kpi"><p>${label}</p><b>${val}</b>${extra || '<span class="delta-slot"></span>'}<span class="kpi-note">${note}</span></div>`;
 
   view.innerHTML = `
     ${pageHead(esc(title), V === 'type' ? esc(K) : '', { crumb })}
