@@ -333,3 +333,4 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .picker.menu .pk-item { padding: 8px 10px; grid-template-columns: minmax(0, 1fr) 0 16px; color: var(--ink); }
 .picker.menu .pk-item.on { font-weight: 600; }
 .kpi-focus:hover .focus-btn, .kpi-focus.open .focus-btn { text-decoration: underline; text-underline-offset: 4px; }
+.pk-list { position: relative; }

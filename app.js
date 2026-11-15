@@ -390,13 +390,13 @@ function bindRangeMenu(root) {
   const outside = (e) => { if (!wrap.contains(e.target)) close(false); };
   const open = () => {
     menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('open');
-    (menu.querySelector('.pk-item.on') || items()[0]).focus();
+    (menu.querySelector('.pk-item.on') || items()[0]).focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
   };
   const close = (back = true) => {
     menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); wrap.classList.remove('open');
     document.removeEventListener('pointerdown', outside);
-    if (back) btn.focus();
+    if (back) btn.focus({ preventScroll: true });
   };
   btn.onclick = () => (menu.hidden ? open() : close());
   btn.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); open(); } };
@@ -407,8 +407,8 @@ function bindRangeMenu(root) {
   menu.onkeydown = (e) => {
     const list = items(), i = list.indexOf(document.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); close(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list.at(-1)).focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus({ preventScroll: true }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list.at(-1)).focus({ preventScroll: true }); }
     else if (e.key === 'Tab') close(false);
   };
 }
@@ -586,14 +586,19 @@ function bindFocusPicker(view) {
   const items = () => [...pk.querySelectorAll('.pk-item:not([hidden])')];
   const open = () => {
     pk.hidden = false; btn.setAttribute('aria-expanded', 'true'); kpi.classList.add('open');
-    search.value = ''; filter(); search.focus();
-    pk.querySelector('.pk-item.on')?.scrollIntoView({ block: 'center' });
+    search.value = ''; filter();
+    // 화면 아래 남은 공간에 맞춰 목록 높이를 줄인다 (창이 화면 밖으로 넘치지 않게)
+    const list = pk.querySelector('.pk-list');
+    list.style.maxHeight = `${Math.max(160, Math.min(380, innerHeight - list.getBoundingClientRect().top - 24))}px`;
+    search.focus({ preventScroll: true }); // 커서를 놓을 때 페이지가 스크롤되지 않게
+    const on = pk.querySelector('.pk-item.on'); // 선택한 항목은 목록 안에서만 가운데로
+    if (on) list.scrollTop = on.offsetTop - list.clientHeight / 2 + on.clientHeight / 2; // .pk-list가 기준 위치(position: relative)
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
   };
   const close = (back = true) => {
     pk.hidden = true; btn.setAttribute('aria-expanded', 'false'); kpi.classList.remove('open');
     document.removeEventListener('pointerdown', outside);
-    if (back) btn.focus();
+    if (back) btn.focus({ preventScroll: true });
   };
   const outside = (e) => { if (!kpi.contains(e.target)) close(false); };
   const filter = () => {
@@ -612,8 +617,8 @@ function bindFocusPicker(view) {
   pk.onkeydown = (e) => {
     const list = items(), i = list.indexOf(document.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); close(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0])?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); (i <= 0 ? search : list[i - 1]).focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); const t = list[i + 1] || list[0]; t?.focus({ preventScroll: true }); t?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); const t = i <= 0 ? search : list[i - 1]; t.focus({ preventScroll: true }); t.scrollIntoView?.({ block: 'nearest' }); }
     else if (e.key === 'Enter' && document.activeElement === search && list.length) { e.preventDefault(); choose(list[0].dataset.focus); }
   };
 }
