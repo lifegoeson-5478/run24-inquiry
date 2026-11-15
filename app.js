@@ -125,11 +125,35 @@ function notCompany(email) {
   document.getElementById('out').onclick = async () => { await sb.auth.signOut(); login(); };
 }
 
+// ── 로딩 스켈레톤: 실제 화면과 같은 자리에 회색 블록을 먼저 보여준다
+const sk = (w = '100%', h = 12, extra = '') => `<span class="sk ${extra}" style="width:${w};height:${h}px"></span>`;
+const skLines = (k, widths = ['92%', '78%', '85%', '64%', '72%', '58%']) => Array.from({ length: k }, (_, i) => sk(widths[i % widths.length], 10)).join('');
+function skeletonView() {
+  return `<div class="skeleton" aria-busy="true" aria-label="불러오는 중">
+    <div class="page-head"><div>${sk('150px', 34)}<p class="page-sub loading">불러오는 중…</p></div><div class="page-tools">${sk('120px', 32)}</div></div>
+    <section class="kpis">${Array.from({ length: 4 }, () => `<div class="kpi">${sk('55%', 11)}${sk('38%', 30)}${sk('48%', 10)}</div>`).join('')}</section>
+    <div class="cards">
+      <section class="card span-2"><div class="card-head"><div>${sk('120px', 15)}${sk('200px', 10)}</div></div>
+        <div class="donut-wrap"><span class="sk sk-ring"></span><div>${skLines(6)}</div></div></section>
+      <section class="card"><div class="card-head"><div>${sk('90px', 15)}</div></div>
+        <div class="sk-cols">${[45, 55, 50, 60, 52, 70, 90].map((h) => sk('100%', h * 1.8)).join('')}</div></section>
+      <section class="card span-3"><div class="card-head"><div>${sk('110px', 15)}${sk('240px', 10)}</div></div>
+        <div class="sk-cols wide">${[60, 72, 68, 80, 75, 85, 78, 88, 82, 90, 70, 40].map((h) => sk('100%', h * 2)).join('')}</div></section>
+    </div></div>`;
+}
+function skeletonFrame() {
+  return `<div class="frame"><aside class="side">${sk('120px', 16, 'dark')}<div class="sk-nav">${Array.from({ length: 9 }, (_, i) => sk(`${[70, 60, 80, 66, 74, 58, 62, 76, 54][i]}%`, 12, 'dark')).join('')}</div></aside>
+    <main class="main"><div class="view">${skeletonView()}</div></main></div>`;
+}
+
 // ── 화면 틀: 왼쪽 사이드바 + 오른쪽 본문
 async function shell(email) {
   S.email = email;
   readHash();
-  const { data: ok } = await db.rpc('is_approver');
+  const approverP = db.rpc('is_approver');
+  const dataP = ADMIN_PAGE ? null : loadData(); // 관리자 확인을 기다리지 않고 바로 시작
+  dataP?.catch(() => {});
+  const { data: ok } = await approverP;
   S.approver = ok === true;
   if (ADMIN_PAGE && !S.approver) {
     app.innerHTML = `<div class="gate"><p class="gate-brand">런24 상담 유형</p><h1>관리자만 들어올 수 있어요</h1>
@@ -144,11 +168,11 @@ async function shell(email) {
         <nav id="nav"></nav>
         <div class="side-foot"><span>${esc(email)}</span><a href="#" id="out">로그아웃</a></div>
       </aside>
-      <main class="main"><div id="view" class="view"><p class="loading">불러오는 중…</p></div></main>
+      <main class="main"><div id="view" class="view">${skeletonView()}</div></main>
     </div>`;
   document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
   if (ADMIN_PAGE) { renderNav(); return admins(); }
-  await loadData();
+  try { await dataP; } catch (e) { document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(e.message || e)})</p>`; return; }
   render();
 }
 
@@ -176,7 +200,7 @@ async function pool(tasks, limit = 6) {
   return out;
 }
 function loadFail(error) {
-  document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`;
+  (document.getElementById('view') || app).innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`;
   throw error;
 }
 
@@ -400,7 +424,7 @@ function chatRow(c) {
     <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button>
       <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡</a></div>
-    <p class="chat-text">${TEXT.has(c.id) ? esc(textOf(c)) || '<span class="muted">(고객이 남긴 내용 없음)</span>' : '<span class="muted">불러오는 중…</span>'}</p>
+    <p class="chat-text">${TEXT.has(c.id) ? esc(textOf(c)) || '<span class="muted">(고객이 남긴 내용 없음)</span>' : `<span class="sk-text">${sk('88%', 11)}${sk('56%', 11)}</span>`}</p>
     <div class="chat-foot">${c.types.map(tagChip).join('')}${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정</span>' : ''}</div></li>`;
 }
 
@@ -408,7 +432,7 @@ function chatRow(c) {
 function malCard(chats, title = '기기 오작동 증상과 처리') {
   const mal = chats.filter(isMal);
   if (!mal.length) return '';
-  if (malTextState !== 'done') { loadMalText(); return card(title, '상담 요약을 불러오는 중이에요', '<p class="muted">잠시만 기다려 주세요.</p>'); }
+  if (malTextState !== 'done') { loadMalText(); return card(title, '상담 요약을 불러오는 중이에요', `<div class="stacked" aria-busy="true"><div>${sk('40px', 12)}${skLines(5)}</div><div>${sk('40px', 12)}${skLines(4)}</div></div>`); }
   const sym = tally(SYMPTOMS, mal).slice(0, 6), res = tallyFirst(RESOLUTIONS, mal);
   return card(title, `오작동 상담 ${n(mal.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
@@ -662,11 +686,13 @@ async function route(session) {
   if (email.toLowerCase().split('@')[1] !== COMPANY_DOMAIN) return notCompany(email);
   shell(email);
 }
-let started = false;
+if (app.querySelector('.loading')) app.innerHTML = skeletonFrame(); // 로그인 확인 전에도 화면 틀을 먼저 보여준다
+let started = false, lastUser = '';
 sb.auth.onAuthStateChange((event, session) => {
   if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-    if (event === 'SIGNED_IN' && started) return; // 토큰 갱신 등으로 다시 그리지 않는다
-    started = true;
+    const who = session?.user?.id || '';
+    if (started && who === lastUser) return; // 같은 사용자에 대한 알림이 또 오면 다시 불러오지 않는다
+    started = true; lastUser = who;
     route(session);
   }
 });

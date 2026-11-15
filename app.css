@@ -239,3 +239,26 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .tile { aspect-ratio: auto; height: 20px; }
 .heat-legend .tile { height: 11px; }
 .heat-grid { gap: 3px; }
+
+/* 로딩 스켈레톤 */
+.sk { display: block; border-radius: 7px; margin-bottom: 8px; max-width: 100%;
+  background: linear-gradient(90deg, #EAEAEA 25%, #F4F4F4 45%, #EAEAEA 65%); background-size: 300% 100%; animation: sk 1.4s ease-in-out infinite; }
+.sk.dark { background: linear-gradient(90deg, #353535 25%, #424242 45%, #353535 65%); background-size: 300% 100%; }
+.sk-ring { width: 160px; height: 160px; border-radius: 50%; margin: 0 auto;
+  -webkit-mask: radial-gradient(circle, transparent 47px, #000 48px); mask: radial-gradient(circle, transparent 47px, #000 48px); }
+.sk-cols { display: flex; align-items: flex-end; gap: 10px; height: 200px; }
+.sk-cols.wide { height: 210px; }
+.sk-cols .sk { flex: 1; margin: 0; border-radius: 8px; }
+.sk-nav { display: grid; gap: 14px; margin-top: 28px; padding: 0 10px; }
+.sk-nav .sk { margin: 0; }
+.side > .sk { margin: 4px 10px 0; }
+.sk-text { display: block; }
+.sk-text .sk { margin-bottom: 6px; }
+.skeleton .page-sub { margin-top: 2px; }
+@keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+@media (prefers-color-scheme: dark) {
+  .sk { background: linear-gradient(90deg, #252526 25%, #2E2E30 45%, #252526 65%); background-size: 300% 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+@media (max-width: 860px) { .sk-nav { display: none; } }
+.skeleton .loading { padding: 0; margin-top: 4px; }
