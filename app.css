@@ -86,7 +86,7 @@ button { font: inherit; color: inherit; }
 .kpi p { margin: 0; color: var(--mid); font-size: 13px; }
 .kpi b { font-size: 30px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .kpi b small { font-size: 16px; margin-left: 2px; }
-.kpi b.kpi-text, .kpi .kpi-text { font-size: 19px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.kpi b.kpi-text, .kpi .kpi-text { font-size: 30px; font-weight: 500; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .kpi-note { color: var(--soft); font-size: 12px; }
 
 /* 증감 배지 */
