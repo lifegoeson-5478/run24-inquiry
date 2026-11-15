@@ -467,7 +467,7 @@ function donut(all, { color, label, onKey } = {}) {
   }).join('');
   return `<div class="donut-wrap">
     <svg class="donut" viewBox="0 0 140 140" role="img" aria-label="유형 묶음 비중"><g transform="rotate(-90 70 70)">${arcs}</g>
-      <text x="70" y="66" text-anchor="middle" class="donut-n">${n(total)}</text><text x="70" y="84" text-anchor="middle" class="donut-l">건</text></svg>
+      <text x="70" y="69" text-anchor="middle" class="donut-n">${n(total)}</text><text x="70" y="85" text-anchor="middle" class="donut-l">건</text></svg>
     <ul class="legend">${entries.map(([k, v]) => `<li>${onKey && k !== OTHER ? `<button data-${onKey}="${esc(k)}">` : '<span>'}
       <i style="background:${color(k)}"></i><span class="lg-l">${esc(label(k))}</span><span class="lg-v">${n(v)}</span><span class="lg-p">${Math.round((v / total) * 100)}%</span>
       ${onKey && k !== OTHER ? '</button>' : '</span>'}</li>`).join('')}</ul></div>`;
