@@ -526,6 +526,22 @@ function pageHead(title, sub, { crumb = '' } = {}) {
     ${S.sync?.last_error ? `<p class="warn">최근 갱신에 실패해서 숫자가 최신이 아닐 수 있어요. (${esc(S.sync.last_error)})</p>` : ''}`;
 }
 
+// ── 중점 유형: 대시보드에서 따로 지켜볼 유형. 'g:묶음' 또는 't:세부유형'. 브라우저마다 기억한다.
+const FOCUS_KEY = 'run24-focus';
+const getFocus = () => { try { return localStorage.getItem(FOCUS_KEY) || 'g:기기오작동'; } catch { return 'g:기기오작동'; } };
+const setFocus = (v) => { try { localStorage.setItem(FOCUS_KEY, v); } catch {} };
+const focusMatch = (f) => (f.startsWith('g:') ? (c) => c.groups.includes(f.slice(2)) : (c) => c.types.includes(f.slice(2)));
+const focusLabel = (f) => (f.startsWith('g:') ? groupLabel(f.slice(2)) : tagLabel(f.slice(2)));
+function focusOptions(current) {
+  return S.groupOrder.map((g) => {
+    const subs = Object.keys(countBy(S.chats.filter((c) => c.groups.includes(g)), (c) => c.types.filter((t) => groupOf(t) === g)));
+    return `<optgroup label="${esc(groupLabel(g))}">
+      <option value="g:${esc(g)}" ${current === 'g:' + g ? 'selected' : ''}>${esc(groupLabel(g))} 전체</option>
+      ${subs.map((t) => `<option value="t:${esc(t)}" ${current === 't:' + t ? 'selected' : ''}>${esc(tagLabel(t))}</option>`).join('')}
+    </optgroup>`;
+  }).join('');
+}
+
 // ── 대시보드 (첫 화면)
 function renderHome() {
   const view = document.getElementById('view');
@@ -537,7 +553,12 @@ function renderHome() {
   const groupTotals = sortGroups(Object.entries(countBy(ranged, (c) => c.groups)));
   const storeTotals = countBy(ranged.filter((c) => c.store !== NO_STORE), (c) => c.store);
   const storeEntries = Object.entries(storeTotals).slice(0, 8);
-  const malShare = ranged.length ? Math.round((ranged.filter(isMal).length / ranged.length) * 100) : 0;
+  let focus = getFocus();
+  if (!S.chats.some(focusMatch(focus))) focus = 'g:기기오작동';
+  const fm = focusMatch(focus);
+  const focusN = ranged.filter(fm).length;
+  const focusShare = ranged.length ? Math.round((focusN / ranged.length) * 100) : 0;
+  const focusLast = byP(last).filter(fm).length, focusPrev = byP(prev).filter(fm).length;
 
   view.innerHTML = `
     ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${RANGES[S.range]} ${n(ranged.length)}건`)}
@@ -546,7 +567,10 @@ function renderHome() {
       <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN)}<span class="kpi-note">그 전 보름 대비</span></div>
       <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
         ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
-      <div class="kpi"><p>기기 오작동 비중</p><b>${malShare}<small>%</small></b><span class="kpi-note">${RANGES[S.range]} 전체 상담 중</span></div>
+      <div class="kpi kpi-focus" id="focus-kpi" title="눌러서 지켜볼 유형을 바꿀 수 있어요">
+        <p><label class="sr" for="focus-sel">지켜볼 유형</label><select id="focus-sel" class="focus-sel">${focusOptions(focus)}</select></p>
+        <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev)}
+        <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span></div>
     </section>
 
     <div class="cards">
@@ -566,6 +590,12 @@ function renderHome() {
 
   bindCommon(view);
   view.querySelector('#more-chats').onclick = () => go('all');
+  const sel = view.querySelector('#focus-sel');
+  sel.onchange = () => { setFocus(sel.value); S.animateNext = false; render(); };
+  view.querySelector('#focus-kpi').onclick = (e) => { // 카드 아무 곳이나 눌러도 목록이 열리게
+    if (e.target === sel) return;
+    try { sel.showPicker(); } catch { sel.focus(); }
+  };
   for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { go('all'); S.period = b.dataset.period; render(); };
 }
 

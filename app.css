@@ -288,3 +288,11 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
   .enter *, .chat.reveal, .chat-text.reveal, .pill { animation: none !important; }
   .st-col, .nav-item, .hbar, .store-row, .legend button, .tag, .btn, .linkish, .group-row { transition: none; }
 }
+
+/* 지켜볼 유형 카드: 눌러서 유형을 바꾼다 */
+.kpi-focus { cursor: pointer; border-radius: 0 18px 18px 0; }
+.kpi-focus:hover { background: var(--tint); }
+.focus-sel { font: inherit; font-size: 13px; color: var(--ink); font-weight: 600; background: transparent; border: 0; padding: 0 2px 0 0;
+  cursor: pointer; max-width: 100%; text-overflow: ellipsis; }
+.focus-sel:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+@media (max-width: 860px) { .kpi-focus { border-radius: 0 0 18px 0; } }
