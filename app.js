@@ -376,8 +376,42 @@ function render() {
 }
 
 // ── 차트와 조각 (흑백)
-const rangeSelect = () => `<label class="select"><span class="sr">기간</span><select id="range">${Object.entries(RANGES).map(([k, v]) =>
-  `<option value="${k}" ${S.range === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+const rangeSelect = () => `<div class="menu-wrap" id="range-wrap">
+  <button type="button" id="range-btn" class="range-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="기간: ${RANGES[S.range]}">${RANGES[S.range]}<span aria-hidden="true">⌄</span></button>
+  <div class="picker menu" id="range-menu" role="listbox" aria-label="기간" hidden>${Object.entries(RANGES).map(([k, v]) =>
+    `<button type="button" class="pk-item ${S.range === k ? 'on' : ''}" role="option" aria-selected="${S.range === k}" data-range="${k}">
+      <span class="pk-label">${v}</span><span></span><span class="pk-check" aria-hidden="true">${S.range === k ? '✓' : ''}</span></button>`).join('')}</div></div>`;
+
+// 기간 메뉴: 열기·닫기·바깥 클릭·키보드
+function bindRangeMenu(root) {
+  const wrap = root.querySelector('#range-wrap'); if (!wrap) return;
+  const btn = wrap.querySelector('#range-btn'), menu = wrap.querySelector('#range-menu');
+  const items = () => [...menu.querySelectorAll('.pk-item')];
+  const outside = (e) => { if (!wrap.contains(e.target)) close(false); };
+  const open = () => {
+    menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('open');
+    (menu.querySelector('.pk-item.on') || items()[0]).focus();
+    setTimeout(() => document.addEventListener('pointerdown', outside), 0);
+  };
+  const close = (back = true) => {
+    menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); wrap.classList.remove('open');
+    document.removeEventListener('pointerdown', outside);
+    if (back) btn.focus();
+  };
+  btn.onclick = () => (menu.hidden ? open() : close());
+  btn.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); open(); } };
+  menu.onclick = (e) => {
+    const it = e.target.closest('.pk-item'); if (!it) return;
+    close(false); S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); document.getElementById('range-btn')?.focus();
+  };
+  menu.onkeydown = (e) => {
+    const list = items(), i = list.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list.at(-1)).focus(); }
+    else if (e.key === 'Tab') close(false);
+  };
+}
 const card = (title, sub, body, { cls = '', tools = '' } = {}) => `<section class="card ${cls}">
   <div class="card-head"><div><h2>${title}</h2>${sub ? `<p class="card-sub">${sub}</p>` : ''}</div>${tools}</div>${body}</section>`;
 
@@ -506,7 +540,7 @@ function malCard(chats, title = '기기 오작동 증상과 처리') {
 }
 
 function bindCommon(root) {
-  root.querySelector('#range')?.addEventListener('change', (e) => { S.range = e.target.value; S.shown = PAGE; render(); });
+  bindRangeMenu(root);
   for (const b of root.querySelectorAll('[data-group]')) b.onclick = () => go('group', b.dataset.group);
   for (const b of root.querySelectorAll('[data-type]')) b.onclick = () => go('type', b.dataset.type);
   for (const b of root.querySelectorAll('[data-store]')) b.onclick = () => go('store', b.dataset.store);
@@ -532,14 +566,56 @@ const getFocus = () => { try { return localStorage.getItem(FOCUS_KEY) || 'g:기�
 const setFocus = (v) => { try { localStorage.setItem(FOCUS_KEY, v); } catch {} };
 const focusMatch = (f) => (f.startsWith('g:') ? (c) => c.groups.includes(f.slice(2)) : (c) => c.types.includes(f.slice(2)));
 const focusLabel = (f) => (f.startsWith('g:') ? groupLabel(f.slice(2)) : tagLabel(f.slice(2)));
-function focusOptions(current) {
-  return S.groupOrder.map((g) => {
-    const subs = Object.keys(countBy(S.chats.filter((c) => c.groups.includes(g)), (c) => c.types.filter((t) => groupOf(t) === g)));
-    return `<optgroup label="${esc(groupLabel(g))}">
-      <option value="g:${esc(g)}" ${current === 'g:' + g ? 'selected' : ''}>${esc(groupLabel(g))} 전체</option>
-      ${subs.map((t) => `<option value="t:${esc(t)}" ${current === 't:' + t ? 'selected' : ''}>${esc(tagLabel(t))}</option>`).join('')}
-    </optgroup>`;
-  }).join('');
+function focusPicker(current, ranged) {
+  const cnt = (f) => ranged.filter(focusMatch(f)).length;
+  const item = (f, label, cls = '') => `<button type="button" class="pk-item ${cls} ${current === f ? 'on' : ''}" role="option" aria-selected="${current === f}" data-focus="${esc(f)}" data-label="${esc(label)}">
+      <span class="pk-label">${esc(label)}</span><span class="pk-count">${n(cnt(f))}</span><span class="pk-check" aria-hidden="true">${current === f ? '✓' : ''}</span></button>`;
+  return `<div class="picker" id="focus-picker" role="dialog" aria-label="지켜볼 유형 고르기" hidden>
+    <input type="search" class="pk-search" placeholder="유형 이름으로 찾기" aria-label="유형 이름으로 찾기">
+    <div class="pk-list" role="listbox">${S.groupOrder.map((g) => {
+      const subs = Object.keys(countBy(S.chats.filter((c) => c.groups.includes(g)), (c) => c.types.filter((t) => groupOf(t) === g)));
+      return `<div class="pk-group"><p class="pk-head"><i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}</p>
+        ${item('g:' + g, groupLabel(g) + ' 전체', 'pk-all')}${subs.map((t) => item('t:' + t, tagLabel(t))).join('')}</div>`;
+    }).join('')}<p class="pk-empty" hidden>찾는 유형이 없어요</p></div>
+  </div>`;
+}
+
+function bindFocusPicker(view) {
+  const kpi = view.querySelector('#focus-kpi'), btn = view.querySelector('#focus-btn'), pk = view.querySelector('#focus-picker');
+  const search = pk.querySelector('.pk-search');
+  const items = () => [...pk.querySelectorAll('.pk-item:not([hidden])')];
+  const open = () => {
+    pk.hidden = false; btn.setAttribute('aria-expanded', 'true'); kpi.classList.add('open');
+    search.value = ''; filter(); search.focus();
+    pk.querySelector('.pk-item.on')?.scrollIntoView({ block: 'center' });
+    setTimeout(() => document.addEventListener('pointerdown', outside), 0);
+  };
+  const close = (back = true) => {
+    pk.hidden = true; btn.setAttribute('aria-expanded', 'false'); kpi.classList.remove('open');
+    document.removeEventListener('pointerdown', outside);
+    if (back) btn.focus();
+  };
+  const outside = (e) => { if (!kpi.contains(e.target)) close(false); };
+  const filter = () => {
+    const q = search.value.trim();
+    for (const g of pk.querySelectorAll('.pk-group')) {
+      let any = false;
+      for (const it of g.querySelectorAll('.pk-item')) { const hit = !q || it.dataset.label.includes(q); it.hidden = !hit; any ||= hit; }
+      g.hidden = !any;
+    }
+    pk.querySelector('.pk-empty').hidden = items().length > 0;
+  };
+  const choose = (f) => { setFocus(f); close(false); S.animateNext = false; render(); document.getElementById('focus-btn')?.focus(); };
+  kpi.onclick = (e) => { if (pk.contains(e.target)) return; pk.hidden ? open() : close(); };
+  search.oninput = filter;
+  pk.onclick = (e) => { const it = e.target.closest('.pk-item'); if (it) choose(it.dataset.focus); };
+  pk.onkeydown = (e) => {
+    const list = items(), i = list.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0])?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (i <= 0 ? search : list[i - 1]).focus(); }
+    else if (e.key === 'Enter' && document.activeElement === search && list.length) { e.preventDefault(); choose(list[0].dataset.focus); }
+  };
 }
 
 // ── 대시보드 (첫 화면)
@@ -568,9 +644,9 @@ function renderHome() {
       <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
         ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
       <div class="kpi kpi-focus" id="focus-kpi" title="눌러서 지켜볼 유형을 바꿀 수 있어요">
-        <p><label class="sr" for="focus-sel">지켜볼 유형</label><select id="focus-sel" class="focus-sel">${focusOptions(focus)}</select></p>
+        <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
         <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev)}
-        <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span></div>
+        <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span>${focusPicker(focus, ranged)}</div>
     </section>
 
     <div class="cards">
@@ -590,12 +666,8 @@ function renderHome() {
 
   bindCommon(view);
   view.querySelector('#more-chats').onclick = () => go('all');
-  const sel = view.querySelector('#focus-sel');
-  sel.onchange = () => { setFocus(sel.value); S.animateNext = false; render(); };
-  view.querySelector('#focus-kpi').onclick = (e) => { // 카드 아무 곳이나 눌러도 목록이 열리게
-    if (e.target === sel) return;
-    try { sel.showPicker(); } catch { sel.focus(); }
-  };
+  bindFocusPicker(view);
+
   for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { go('all'); S.period = b.dataset.period; render(); };
 }
 
