@@ -184,8 +184,7 @@ function renderNav() {
   const here = (v, k = '') => !ADMIN_PAGE && S.view === v && (!k || S.key === k);
   nav.innerHTML = ADMIN_PAGE
     ? `<a class="nav-item" href="./">대시보드</a><span class="nav-item on">관리자</span>`
-    : `${item('대시보드', 'data-nav="home"', here('home'))}
-       ${item('전체 상담', 'data-nav="all"', here('all'))}
+    : `${item('대시보드', 'data-nav="home"', here('home') || here('all'))}
        <p class="nav-head">유형 묶음</p>
        ${S.groupOrder.map((g) => item(`<i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}`, `data-group="${esc(g)}"`,
          here('group', g) || (S.view === 'type' && groupOf(S.key) === g))).join('')}
