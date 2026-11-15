@@ -82,7 +82,7 @@ const tagLabel = (t) => (t.includes('/') ? t.slice(t.indexOf('/') + 1) : isParen
 // ── 상태. 보는 화면과 필터는 URL 해시에 넣어 링크로 공유할 수 있게 한다.
 const S = {
   email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(), groupShade: {}, groupOrder: [],
-  view: 'home', key: '', range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
+  view: 'home', key: '', animateNext: false, revealFrom: null, range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
 };
 const RANGES = { 30: '최근 1개월', 90: '최근 3개월', 180: '최근 6개월', 365: '최근 1년', all: '전체 기간' };
 const VIEWS = ['group', 'type', 'store', 'all'];
@@ -172,6 +172,7 @@ async function shell(email) {
     </div>`;
   document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
   if (ADMIN_PAGE) { renderNav(); return admins(); }
+  S.animateNext = true;
   try { await dataP; } catch (e) { document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(e.message || e)})</p>`; return; }
   render();
 }
@@ -278,7 +279,7 @@ async function loadMalText() {
     for (const r of data || []) TEXT.set(r.chat_id, { summary: r.summary, first_message: r.first_message });
   }));
   malTextState = 'done';
-  render();
+  afterEntrance(render);
 }
 // 검색은 서버에서: 검색어가 들어간 상담 ID를 받아 둔다
 const SEARCH = { q: '', ids: null };
@@ -314,16 +315,63 @@ function delta(now, before, { words = false } = {}) {
   return `<span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '↗' : '↘'} ${txt}</span>`;
 }
 
+// ── 모션: 화면이 처음 뜨거나 바뀔 때 차트가 차례로 그려지고 KPI 숫자가 올라간다. 기기의 '동작 줄이기'를 켜면 끈다.
+const REDUCED_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+function playEntrance(root) {
+  if (!root) return;
+  const stagger = (sel, step, groupSel) => root.querySelectorAll(groupSel || 'body').forEach((g) =>
+    (groupSel ? g : root).querySelectorAll(sel).forEach((el, i) => el.style.setProperty('--i', i * step)));
+  stagger('.vbar', 1, '.vbars');
+  stagger('.st-col', 1, '.stack-trend');
+  stagger('.hbars > li, .stores > li', 1, '.card');
+  stagger('.legend > li', 1, '.donut-wrap');
+  root.querySelectorAll('.heat-grid').forEach((g) => [...g.children].forEach((el, i) => el.style.setProperty('--i', i % 13)));
+  root.querySelectorAll('.donut circle').forEach((c, i) => c.style.setProperty('--i', i));
+  root.classList.add('enter');
+  clearTimeout(playEntrance.t);
+  playEntrance.t = setTimeout(() => root.classList.remove('enter'), 1600);
+  // KPI 숫자 올라가기
+  root.querySelectorAll('.kpi b').forEach((b) => {
+    const node = [...b.childNodes].find((x) => x.nodeType === 3 && /\d/.test(x.textContent));
+    if (!node) return;
+    const target = Number(node.textContent.replace(/[^\d]/g, ''));
+    if (!target) return;
+    const t0 = performance.now(), dur = 700;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      node.textContent = Math.round(target * e).toLocaleString('ko-KR');
+      if (k < 1 && node.isConnected) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function afterEntrance(fn) {
+  const v = document.getElementById('view');
+  if (v?.classList.contains('enter')) setTimeout(() => afterEntrance(fn), 200); else fn();
+}
+
 function go(view, key = '') {
-  Object.assign(S, { view, key, period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false });
+  Object.assign(S, { view, key, period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false, animateNext: true });
   render(); scrollTo({ top: 0 });
 }
 function render() {
   writeHash();
   renderNav();
+  const viewEl = document.getElementById('view');
+  const play = S.animateNext && !REDUCED_MOTION; S.animateNext = false;
+  viewEl?.classList.remove('enter'); // 다시 그릴 때(요약 도착 등)는 모션을 처음부터 반복하지 않는다
   if (S.view === 'home') renderHome(); else renderDetail();
+  if (play) playEntrance(viewEl);
+  S.revealFrom = null;
   const visible = [...document.querySelectorAll('.chat[data-id]')].map((li) => ({ id: li.dataset.id }));
-  ensureText(visible).then((loaded) => { if (loaded) render(); });
+  ensureText(visible).then((loaded) => {
+    if (!loaded) return;
+    for (const li of document.querySelectorAll('.chat[data-id]')) {
+      const el = li.querySelector('.chat-text'), c = { id: li.dataset.id };
+      if (el && el.querySelector('.sk-text') && TEXT.has(c.id)) { el.innerHTML = esc(textOf(c)) || '<span class="muted">(고객이 남긴 내용 없음)</span>'; el.classList.add('reveal'); }
+    }
+  });
   if (S.q && SEARCH.q !== S.q.trim()) searchIds(S.q.trim()).then((ids) => { SEARCH.ids = ids; SEARCH.q = S.q.trim(); render(); });
 }
 
@@ -435,8 +483,8 @@ function heatmap(chats) {
 }
 
 const tagChip = (t) => `<button class="tag" data-type="${esc(t)}" title="${esc(t)}"><i style="background:${groupColor(groupOf(t))}"></i>${esc(tagLabel(t))}</button>`;
-function chatRow(c) {
-  return `<li class="chat" data-id="${esc(c.id)}">
+function chatRow(c, reveal = false) {
+  return `<li class="chat${reveal ? ' reveal' : ''}" data-id="${esc(c.id)}">
     <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button>
       <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡</a></div>
@@ -588,7 +636,7 @@ function renderDetail() {
         ${S.store ? `<button class="pill" data-clear="store">${esc(S.store)} ✕</button>` : ''}
         ${S.type ? `<button class="pill" data-clear="type">${esc(tagLabel(S.type))} ✕</button>` : ''}
       </div>
-      ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map(chatRow).join('')}</ul>
+      ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map((c, i) => chatRow(c, S.revealFrom !== null && i >= S.revealFrom)).join('')}</ul>
         ${listed.length > S.shown ? `<button class="btn ghost" id="more">${n(listed.length - S.shown)}건 더 보기</button>` : ''}`
         : '<p class="muted empty">조건에 맞는 상담이 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
     </section>`;
@@ -600,7 +648,7 @@ function renderDetail() {
   for (const b of view.querySelectorAll('[data-filter-store]')) b.onclick = () => { S.store = S.store === b.dataset.filterStore ? '' : b.dataset.filterStore; relist(true); };
   for (const b of view.querySelectorAll('[data-filter-type]')) b.onclick = () => { S.type = S.type === b.dataset.filterType ? '' : b.dataset.filterType; relist(true); };
   for (const b of view.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = ''; relist(); };
-  view.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; render(); });
+  view.querySelector('#more')?.addEventListener('click', () => { S.revealFrom = S.shown; S.shown += PAGE; render(); });
   view.querySelector('#all-stores')?.addEventListener('click', () => { S.allStores = !S.allStores; render(); });
   const qi = view.querySelector('#q');
   let timer;

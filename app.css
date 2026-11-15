@@ -263,3 +263,28 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 @media (max-width: 860px) { .sk-nav { display: none; } }
 .skeleton .loading { padding: 0; margin-top: 4px; }
 .axis-note { margin: 8px 0 0; font-size: 11px; color: var(--soft); }
+
+/* ── 모션: 처음·화면 전환 때 한 번 (.enter), 그리고 동작에 대한 반응 */
+@keyframes grow-y { from { transform: scaleY(0); } }
+@keyframes grow-x { from { transform: scaleX(0); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes pop-in { from { opacity: 0; transform: scale(.85); } }
+@keyframes donut-draw { from { stroke-dasharray: 0 400; } }
+.enter .vbar-b { transform-origin: bottom; animation: grow-y .7s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.enter .vbar-v, .enter .st-v { animation: fade-in .4s ease-out both; animation-delay: calc(var(--i, 0) * 45ms + .35s); }
+.enter .st-bar { transform-origin: bottom; animation: grow-y .75s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 30ms); }
+.enter .hbar-track span, .enter .stack { transform-origin: left; animation: grow-x .7s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 35ms + .1s); }
+.enter .donut circle { animation: donut-draw .9s cubic-bezier(.3,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 70ms); }
+.enter .legend > li { animation: fade-in .4s ease-out both; animation-delay: calc(var(--i, 0) * 40ms + .2s); }
+.enter .tile { animation: fade-in .45s ease-out both; animation-delay: calc(var(--i, 0) * 35ms); }
+.enter .kpis, .enter .page-head { animation: fade-in .35s ease-out both; }
+.chat.reveal, .chat-text.reveal { animation: rise-in .3s ease-out both; }
+.pill { animation: pop-in .18s ease-out both; }
+.st-col, .nav-item, .hbar, .store-row, .legend button, .tag, .btn, .linkish, .group-row { transition: background-color .15s, box-shadow .15s, color .15s, border-color .15s; }
+.st-bar i, .vbar-b { transition: opacity .15s; }
+.st-col:hover .st-bar i { opacity: .85; }
+@media (prefers-reduced-motion: reduce) {
+  .enter *, .chat.reveal, .chat-text.reveal, .pill { animation: none !important; }
+  .st-col, .nav-item, .hbar, .store-row, .legend button, .tag, .btn, .linkish, .group-row { transition: none; }
+}
