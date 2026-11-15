@@ -6,49 +6,103 @@
 <title>기기 오작동 문의 유형</title>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e5e7eb;
-    --accent: #2563eb; --accent-soft: #dbeafe; --warn-bg: #fef3c7; --warn: #92400e; --est: #7c3aed;
+    --bg: #f5f6f8; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e6e8ec;
+    --accent: #2563eb; --accent-soft: #e8efff; --bar-soft: #bfd0f7;
+    --up: #dc2626; --up-bg: #fde8e8; --down: #15803d; --down-bg: #e3f6e9;
+    --warn-bg: #fef3c7; --warn: #92400e; --est: #7c3aed;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #0f1115; --card: #181b21; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2f37;
-      --accent: #60a5fa; --accent-soft: #1e3a5f; --warn-bg: #3b2f12; --warn: #fcd34d; --est: #a78bfa; }
+      --accent: #60a5fa; --accent-soft: #1c2b44; --bar-soft: #2c4a7a;
+      --up: #f87171; --up-bg: #3a1d1d; --down: #4ade80; --down-bg: #15301f;
+      --warn-bg: #3b2f12; --warn: #fcd34d; --est: #a78bfa; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 14px; }
   h1 { font-size: 20px; margin: 0; }
-  h2 { font-size: 16px; margin: 0 0 12px; }
+  h2 { font-size: 17px; margin: 0; }
+  h3 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
   .muted { color: var(--muted); font-size: 13px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 8px 14px; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { border-radius: 8px; border: 1px solid var(--line); background: var(--card); padding: 8px 14px; }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .center { text-align: center; padding: 64px 16px; }
-  .warn { background: var(--warn-bg); color: var(--warn); padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
-  .types { width: 100%; border-collapse: collapse; }
-  .types td { padding: 10px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
-  .types tr { cursor: pointer; }
-  .types tr:hover td, .types tr.sel td { background: var(--accent-soft); }
-  .types .name { font-weight: 600; white-space: nowrap; }
-  .types .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; min-width: 120px; }
-  .spark i { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; opacity: .85; }
-  .trend { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 18px; overflow-x: auto; }
-  .trend .col { flex: 1 0 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
-  .trend .bar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 1px; }
-  .trend .v { font-size: 12px; font-variant-numeric: tabular-nums; }
-  .trend .l { font-size: 11px; color: var(--muted); white-space: nowrap; margin-top: 4px; }
+  .warn { background: var(--warn-bg); color: var(--warn); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .kpi .v { font-size: 22px; font-weight: 700; }
+  .kpi .k { font-size: 13px; color: var(--muted); }
+
+  .layout { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .side { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; padding: 8px; }
+  .side .hint { padding: 4px 8px 8px; }
+  .type { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; align-items: center; gap: 4px 10px;
+    width: 100%; text-align: left; border: 0; background: none; border-radius: 8px; padding: 9px 8px; }
+  .type:hover { background: var(--accent-soft); }
+  .type[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .type .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .type .meta { grid-column: 1; font-size: 12px; color: var(--muted); }
+  .type .total { grid-column: 3; grid-row: 1 / span 2; text-align: right; font-weight: 700; white-space: nowrap; }
+  .spark { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: flex-end; gap: 1px; height: 26px; }
+  .spark i { flex: 1; background: var(--accent); border-radius: 1px; min-height: 1px; }
+  .spark i.cur { background: var(--bar-soft); }
+
+  .chg { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+  .chg.up { color: var(--up); background: var(--up-bg); }
+  .chg.down { color: var(--down); background: var(--down-bg); }
+  .chg.same { color: var(--muted); background: var(--bg); }
+
+  .detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .detail-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .back { display: none; }
+  .trend { display: flex; align-items: flex-end; gap: 6px; height: 150px; overflow-x: auto; padding-top: 4px; }
+  .trend button { flex: 1 0 40px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    height: 100%; border: 0; background: none; padding: 0 0 2px; border-radius: 6px; }
+  .trend button:hover { background: var(--accent-soft); }
+  .trend .bar { width: 70%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+  .trend .cur .bar { background: var(--bar-soft); }
+  .trend .on { background: var(--accent-soft); outline: 2px solid var(--accent); }
+  .trend .v { font-size: 12px; }
+  .trend .l { font-size: 11px; color: var(--muted); white-space: nowrap; margin-top: 4px; line-height: 1.2; text-align: center; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+  .chip:hover { border-color: var(--accent); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip b { font-weight: 600; margin-left: 4px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .filter { background: var(--accent-soft); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px; }
+  .filter button { border: 0; background: none; padding: 0 6px; color: var(--muted); }
   .list { width: 100%; border-collapse: collapse; font-size: 14px; }
   .list th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; }
-  .list td { padding: 8px; border-top: 1px solid var(--line); vertical-align: top; }
-  .list td.d { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .badge { display: inline-block; font-size: 11px; color: var(--est); border: 1px solid var(--est); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
-  a { color: var(--accent); }
-  @media (max-width: 640px) {
-    .types .spark-cell { display: none; }
-    .list .store-col { display: none; }
+  .list td { padding: 9px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  .list .d { white-space: nowrap; }
+  .list .s { white-space: nowrap; }
+  .list .go { white-space: nowrap; text-align: right; }
+  .badge { display: inline-block; font-size: 11px; color: var(--est); border: 1px solid var(--est); border-radius: 999px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }
+  .more { width: 100%; margin-top: 10px; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .side { position: static; max-height: none; }
+    .layout.picked .side { display: none; }
+    .layout:not(.picked) .detail { display: none; }
+    .back { display: inline-block; }
   }
+  @media (max-width: 560px) {
+    .kpis { grid-template-columns: 1fr 1fr; }
+    .kpis .kpi:last-child { grid-column: 1 / -1; }
+    .list .s { display: none; }
+    .list td.m .store { display: block; font-size: 12px; color: var(--muted); }
+  }
+  @media (min-width: 561px) { .list td.m .store { display: none; } }
 </style>
 </head>
 <body>
@@ -60,6 +114,7 @@ const SUPABASE_URL = 'https://dnazztgpzfpcezsadyaz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_cuPnQYSO5_hIoNvfLovPPw_VFUnx0u4'; // 공개용 키
 const COMPANY_DOMAIN = 'lifegoeson.kr'; // 화면 안내용. 실제 차단은 DB(RLS)에서 한다.
 const CHANNEL_DESK = (channelId, chatId) => `https://desk.channel.io/#/channels/${channelId}/user_chats/${chatId}`;
+const PAGE = 50;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const db = sb.schema('run24');
@@ -67,7 +122,7 @@ const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kst = (iso, opts) => new Date(iso).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', ...opts });
 
-// 보름 구간: 'YYYY-MM-01' 또는 'YYYY-MM-16'
+// ── 보름 구간: 'YYYY-MM-01' 또는 'YYYY-MM-16' (한국 시간 기준)
 function periodOf(date) {
   const [y, m, d] = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' }).split('-');
   return `${y}-${m}-${+d > 15 ? '16' : '01'}`;
@@ -82,28 +137,54 @@ function periodsFrom(start) {
   }
   return out;
 }
-const periodLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '1~15' : '16~말'}`;
+const periodLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '1~15일' : '16일~말'}`;
+const shortLabel = (p) => `${+p.slice(5, 7)}/${p.endsWith('01') ? '1~15' : '16~'}`;
+
+function change(now, before) {
+  const diff = now - before;
+  if (!before && !now) return '<span class="chg same">0</span>';
+  if (diff === 0) return '<span class="chg same">변화 없음</span>';
+  const pct = before ? ` (${diff > 0 ? '+' : ''}${Math.round((diff / before) * 100)}%)` : '';
+  return `<span class="chg ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}${pct}</span>`;
+}
+
+// ── 화면 상태. URL 해시에 넣어서 링크로 공유할 수 있게 한다.
+const S = { periods: [], types: [], byType: new Map(), type: null, period: null, store: null, rows: null, shown: PAGE, email: '' };
+function readHash() {
+  let hash = location.hash;
+  try { if (!hash.includes('type=')) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
+  const h = new URLSearchParams(hash.slice(1));
+  S.type = h.get('type'); S.period = h.get('period'); S.store = h.get('store');
+}
+function writeHash() {
+  const h = new URLSearchParams();
+  if (S.type) h.set('type', S.type);
+  if (S.period) h.set('period', S.period);
+  if (S.store) h.set('store', S.store);
+  history.replaceState(null, '', h.toString() ? '#' + h : location.pathname);
+}
 
 function login() {
   app.innerHTML = `<div class="center"><h1>기기 오작동 문의 유형</h1>
     <p class="muted">회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
-    <button class="primary" id="go">구글로 로그인</button></div>`;
+    <button class="btn primary" id="go">구글로 로그인</button></div>`;
+  // 공유받은 링크(#type=…)로 들어왔다면 로그인 후 같은 화면으로 돌아오도록 기억해 둔다.
+  try { if (location.hash.includes('type=')) sessionStorage.setItem('run24-hash', location.hash); } catch {}
   document.getElementById('go').onclick = () => sb.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: location.href.split('#')[0].split('?')[0], queryParams: { hd: COMPANY_DOMAIN } },
+    options: { redirectTo: location.origin + location.pathname, queryParams: { hd: COMPANY_DOMAIN } },
   });
 }
 
 function notCompany(email) {
   app.innerHTML = `<div class="center"><h1>접근 권한이 없어요</h1>
     <p class="muted">${esc(email)} 계정은 볼 수 없어요. 회사 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
-    <button id="out">로그아웃</button></div>`;
+    <button class="btn" id="out">로그아웃</button></div>`;
   document.getElementById('out').onclick = async () => { await sb.auth.signOut(); login(); };
 }
 
-let state = { periods: [], byType: new Map(), selected: null };
-
 async function dashboard(email) {
+  S.email = email;
   const [{ data: rows, error }, { data: sync }] = await Promise.all([
     db.from('type_half_month').select('device_type, period_start, cnt'),
     db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
@@ -111,69 +192,145 @@ async function dashboard(email) {
   if (error) { app.innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
 
   const first = rows.reduce((a, r) => (r.period_start < a ? r.period_start : a), periodOf(new Date()));
-  state.periods = periodsFrom(first);
-  state.byType = new Map();
+  S.periods = periodsFrom(first);
+  S.byType = new Map();
   for (const r of rows) {
-    if (!state.byType.has(r.device_type)) state.byType.set(r.device_type, {});
-    state.byType.get(r.device_type)[r.period_start] = r.cnt;
+    if (!S.byType.has(r.device_type)) S.byType.set(r.device_type, {});
+    S.byType.get(r.device_type)[r.period_start] = r.cnt;
   }
-  const recent = state.periods.slice(-6); // 최근 3개월 = 보름 6구간
-  const types = [...state.byType.entries()]
-    .map(([name, m]) => ({ name, m, total: recent.reduce((s, p) => s + (m[p] || 0), 0) }))
+  const P = S.periods, cur = P.at(-1), last = P.at(-2), prev = P.at(-3), recent = P.slice(-6);
+  const sum = (m, ps) => ps.reduce((s, p) => s + (m[p] || 0), 0);
+  S.types = [...S.byType.entries()]
+    .map(([name, m]) => ({ name, m, total: sum(m, recent), last: m[last] || 0, prev: m[prev] || 0 }))
     .sort((a, b) => b.total - a.total);
-  const max = Math.max(1, ...types.flatMap((t) => state.periods.map((p) => t.m[p] || 0)));
+  const all = Object.fromEntries(P.map((p) => [p, S.types.reduce((s, t) => s + (t.m[p] || 0), 0)]));
+  const grand = sum(all, recent);
 
   app.innerHTML = `
     <header>
       <h1>기기 오작동 문의 유형</h1>
-      <span class="muted">${esc(email)} · 마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { dateStyle: 'short', timeStyle: 'short' }) : '-'}
-        · <a href="#" id="out">로그아웃</a></span>
+      <span class="muted">마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+        (매일 새벽 4시) · ${esc(email)} · <a href="#" id="out">로그아웃</a></span>
     </header>
-    ${sync?.last_error ? `<div class="warn">최근 갱신에 실패했어요: ${esc(sync.last_error)}</div>` : ''}
-    <section class="card">
-      <h2>유형별 건수 <span class="muted">최근 3개월 · 보름 단위 추이 (${periodLabel(state.periods[0])}부터)</span></h2>
-      ${types.length ? `<table class="types"><tbody>${types.map((t) => `
-        <tr data-type="${esc(t.name)}">
-          <td class="name">${esc(t.name)}</td>
-          <td class="spark-cell"><div class="spark">${state.periods.map((p) =>
-            `<i style="height:${((t.m[p] || 0) / max) * 100}%" title="${periodLabel(p)}: ${t.m[p] || 0}건"></i>`).join('')}</div></td>
-          <td class="num">${t.total}건</td>
-        </tr>`).join('')}</tbody></table>` : '<p class="muted">아직 데이터가 없어요.</p>'}
+    ${sync?.last_error ? `<div class="warn">최근 갱신에 실패했어요. 숫자가 최신이 아닐 수 있어요. (${esc(sync.last_error)})</div>` : ''}
+    <section class="kpis">
+      <div class="card kpi"><div class="k">최근 3개월 오작동 문의</div><div class="v num">${grand.toLocaleString()}건</div></div>
+      <div class="card kpi"><div class="k">지난 보름 (${periodLabel(last ?? cur)})</div>
+        <div class="v num">${(all[last] || 0).toLocaleString()}건 ${last && prev ? change(all[last] || 0, all[prev] || 0) : ''}</div></div>
+      <div class="card kpi"><div class="k">이번 보름 (${periodLabel(cur)}, 진행 중)</div><div class="v num">${(all[cur] || 0).toLocaleString()}건</div></div>
     </section>
-    <section id="detail"></section>`;
+    <div class="layout" id="layout">
+      <nav class="card side" aria-label="유형 목록">
+        <div class="hint muted">최근 3개월 많은 순 · 증감은 지난 보름과 그 전 보름 비교</div>
+        ${S.types.map((t) => {
+          const max = Math.max(1, ...P.map((p) => t.m[p] || 0)); // 유형마다 자기 최대값 기준
+          return `<button class="type" data-type="${esc(t.name)}">
+            <span class="name">${esc(t.name)}</span>
+            <span class="spark" aria-hidden="true">${P.slice(-12).map((p) =>
+              `<i class="${p === cur ? 'cur' : ''}" style="height:${((t.m[p] || 0) / max) * 100}%"></i>`).join('')}</span>
+            <span class="total num">${t.total}건</span>
+            <span class="meta">${grand ? Math.round((t.total / grand) * 100) : 0}% · ${last && prev ? change(t.last, t.prev) : ''}</span>
+          </button>`;
+        }).join('')}
+      </nav>
+      <section class="detail" id="detail"></section>
+    </div>`;
 
-  document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); login(); };
-  for (const tr of app.querySelectorAll('.types tr')) tr.onclick = () => detail(tr.dataset.type);
+  document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
+  for (const b of app.querySelectorAll('.type')) b.onclick = () => pick(b.dataset.type, true);
+  readHash();
+  pick(S.byType.has(S.type) ? S.type : S.types[0]?.name, false, true);
 }
 
-async function detail(type) {
-  state.selected = type;
-  for (const tr of app.querySelectorAll('.types tr')) tr.classList.toggle('sel', tr.dataset.type === type);
-  const el = document.getElementById('detail');
-  const m = state.byType.get(type) || {};
-  const max = Math.max(1, ...state.periods.map((p) => m[p] || 0));
-  el.innerHTML = `<div class="card"><h2>${esc(type)}</h2>
-    <div class="trend">${state.periods.map((p) => `<div class="col">
-      <span class="v">${m[p] || 0}</span><div class="bar" style="height:${((m[p] || 0) / max) * 100}%"></div>
-      <span class="l">${periodLabel(p)}</span></div>`).join('')}</div></div>
-    <div class="card"><p class="muted">불러오는 중…</p></div>`;
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+async function pick(type, userClick, keepFilters) {
+  if (!type) return;
+  if (!keepFilters) { S.period = null; S.store = null; }
+  S.type = type; S.rows = null; S.shown = PAGE;
+  writeHash();
+  for (const b of app.querySelectorAll('.type')) b.setAttribute('aria-current', String(b.dataset.type === type));
+  const layout = document.getElementById('layout');
+  if (userClick) layout.classList.add('picked');
+  renderDetail();
+  if (userClick && innerWidth <= 900) scrollTo({ top: layout.offsetTop - 8 });
 
-  const { data, error } = await db.from('chat_list')
-    .select('chat_id, channel_id, opened_at, store, first_message, estimated')
-    .eq('device_type', type).order('opened_at', { ascending: false }).limit(200);
-  if (state.selected !== type) return;
-  const box = el.lastElementChild;
-  if (error) { box.innerHTML = `<div class="warn">목록을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
-  const est = data.filter((r) => r.estimated).length;
-  box.innerHTML = `<h2>문의 목록 <span class="muted">최근 ${data.length}건${est ? ` · 그중 ${est}건은 메시지로 추정한 유형` : ''}</span></h2>
-    <table class="list"><thead><tr><th>날짜</th><th class="store-col">매장</th><th>고객 첫 메시지</th><th></th></tr></thead><tbody>
-    ${data.map((r) => `<tr>
-      <td class="d">${kst(r.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-      <td class="store-col">${esc(r.store)}</td>
-      <td>${esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge">추정</span>' : ''}</td>
-      <td><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡</a></td>
-    </tr>`).join('')}</tbody></table>`;
+  // 이 유형의 문의를 모두 가져와서 매장·기간 필터는 화면에서 처리한다 (유형당 수백 건 수준).
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('chat_list')
+      .select('chat_id, channel_id, opened_at, store, first_message, estimated')
+      .eq('device_type', type).order('opened_at', { ascending: false }).range(from, from + 999);
+    if (S.type !== type) return;
+    if (error) { S.rows = { error: error.message }; return renderDetail(); }
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  for (const r of rows) r.period = periodOf(new Date(r.opened_at));
+  S.rows = rows;
+  renderDetail();
+}
+
+function renderDetail() {
+  const el = document.getElementById('detail');
+  const t = S.types.find((x) => x.name === S.type);
+  if (!t) { el.innerHTML = ''; return; }
+  const P = S.periods, cur = P.at(-1);
+  const max = Math.max(1, ...P.map((p) => t.m[p] || 0));
+  const loaded = Array.isArray(S.rows);
+
+  // 매장별 건수: 선택한 기간이 있으면 그 기간 기준
+  let storeChips = '<p class="muted">불러오는 중…</p>';
+  if (loaded) {
+    const counts = {};
+    for (const r of S.rows) if (!S.period || r.period === S.period) counts[r.store] = (counts[r.store] || 0) + 1;
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    storeChips = top.length ? `<div class="chips">${top.slice(0, 15).map(([s, n]) =>
+      `<button class="chip ${S.store === s ? 'on' : ''}" data-store="${esc(s)}">${esc(s)}<b class="num">${n}</b></button>`).join('')}
+      ${top.length > 15 ? `<span class="muted">외 ${top.length - 15}곳</span>` : ''}</div>` : '<p class="muted">없음</p>';
+  }
+
+  let listHtml = '<p class="muted">불러오는 중…</p>';
+  if (S.rows?.error) listHtml = `<div class="warn">목록을 불러오지 못했어요: ${esc(S.rows.error)}</div>`;
+  else if (loaded) {
+    const rows = S.rows.filter((r) => (!S.period || r.period === S.period) && (!S.store || r.store === S.store));
+    const est = rows.filter((r) => r.estimated).length;
+    listHtml = `
+      <div class="filters">
+        <span class="muted">${rows.length.toLocaleString()}건${est ? ` · 그중 ${est}건은 메시지로 추정한 유형` : ''}</span>
+        ${S.period ? `<span class="filter">${periodLabel(S.period)}<button data-clear="period" aria-label="기간 필터 해제">✕</button></span>` : ''}
+        ${S.store ? `<span class="filter">${esc(S.store)}<button data-clear="store" aria-label="매장 필터 해제">✕</button></span>` : ''}
+      </div>
+      ${rows.length ? `<table class="list"><thead><tr><th>날짜</th><th class="s">매장</th><th>고객 메시지</th><th></th></tr></thead><tbody>
+      ${rows.slice(0, S.shown).map((r) => `<tr>
+        <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${kst(r.opened_at, { hour: '2-digit', minute: '2-digit' })}</span></td>
+        <td class="s">${esc(r.store)}</td>
+        <td class="m"><span class="store">${esc(r.store)}</span>${esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge" title="태그에 세부유형이 없어 메시지 내용으로 추정했어요">추정</span>' : ''}</td>
+        <td class="go"><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a></td>
+      </tr>`).join('')}</tbody></table>
+      ${rows.length > S.shown ? `<button class="btn more" id="more">더 보기 (${(rows.length - S.shown).toLocaleString()}건 남음)</button>` : ''}`
+      : '<p class="muted">조건에 맞는 문의가 없어요.</p>'}`;
+  }
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="detail-head">
+        <button class="btn back" id="back">← 유형 목록</button>
+        <h2>${esc(t.name)}</h2>
+        <span class="muted">최근 3개월 ${t.total}건 · 지난 보름 ${t.last}건 ${change(t.last, t.prev)}</span>
+      </div>
+      <p class="muted" style="margin:6px 0 0">막대를 누르면 그 기간 문의만 볼 수 있어요. 연한 막대는 아직 진행 중인 보름이에요.</p>
+      <div class="trend">${P.map((p) => `<button class="${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${periodLabel(p)}: ${t.m[p] || 0}건">
+        <span class="v num">${t.m[p] || 0}</span><span class="bar" style="height:${((t.m[p] || 0) / max) * 100}%"></span>
+        <span class="l">${shortLabel(p)}</span></button>`).join('')}</div>
+    </div>
+    <div class="card"><h3>매장별 ${S.period ? `(${periodLabel(S.period)})` : '(전체 기간)'}</h3>${storeChips}</div>
+    <div class="card"><h3>문의 목록</h3>${listHtml}</div>`;
+
+  el.querySelector('#back').onclick = () => { document.getElementById('layout').classList.remove('picked'); scrollTo({ top: 0 }); };
+  for (const b of el.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? null : b.dataset.period; S.shown = PAGE; writeHash(); renderDetail(); };
+  for (const b of el.querySelectorAll('[data-store]')) b.onclick = () => { S.store = S.store === b.dataset.store ? null : b.dataset.store; S.shown = PAGE; writeHash(); renderDetail(); };
+  for (const b of el.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = null; S.shown = PAGE; writeHash(); renderDetail(); };
+  el.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; renderDetail(); });
+  const trend = el.querySelector('.trend'); trend.scrollLeft = trend.scrollWidth; // 최근 구간이 보이게
 }
 
 async function route(session) {
