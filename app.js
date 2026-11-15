@@ -398,11 +398,11 @@ function bindRangeMenu(root) {
     document.removeEventListener('pointerdown', outside);
     if (back) btn.focus({ preventScroll: true });
   };
-  btn.onclick = () => (menu.hidden ? open() : close());
+  btn.onclick = (e) => (menu.hidden ? open() : close(!e.detail));
   btn.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); open(); } };
   menu.onclick = (e) => {
     const it = e.target.closest('.pk-item'); if (!it) return;
-    close(false); if (UNIT[it.dataset.range] !== UNIT[S.range]) S.period = ''; S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); document.getElementById('range-btn')?.focus();
+    close(false); if (UNIT[it.dataset.range] !== UNIT[S.range]) S.period = ''; S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); if (!e.detail) document.getElementById('range-btn')?.focus({ preventScroll: true });
   };
   menu.onkeydown = (e) => {
     const list = items(), i = list.indexOf(document.activeElement);
@@ -646,10 +646,10 @@ function bindFocusPicker(view) {
     }
     pk.querySelector('.pk-empty').hidden = items().length > 0;
   };
-  const choose = (f) => { setFocus(f); close(false); S.animateNext = false; render(); document.getElementById('focus-btn')?.focus(); };
-  kpi.onclick = (e) => { if (pk.contains(e.target)) return; pk.hidden ? open() : close(); };
+  const choose = (f, kb = true) => { setFocus(f); close(false); S.animateNext = false; render(); if (kb) document.getElementById('focus-btn')?.focus({ preventScroll: true }); };
+  kpi.onclick = (e) => { if (pk.contains(e.target)) return; pk.hidden ? open() : close(!e.detail); };
   search.oninput = filter;
-  pk.onclick = (e) => { const it = e.target.closest('.pk-item'); if (it) choose(it.dataset.focus); };
+  pk.onclick = (e) => { const it = e.target.closest('.pk-item'); if (it) choose(it.dataset.focus, !e.detail); };
   pk.onkeydown = (e) => {
     const list = items(), i = list.indexOf(document.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); close(); }
