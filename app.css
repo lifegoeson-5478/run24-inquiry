@@ -291,7 +291,6 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 
 /* 지켜볼 유형 카드: 눌러서 유형을 바꾼다 */
 .kpi-focus { cursor: pointer; border-radius: 0 18px 18px 0; }
-.kpi-focus:hover { background: var(--tint); }
 .focus-sel { font: inherit; font-size: 13px; color: var(--ink); font-weight: 600; background: transparent; border: 0; padding: 0 2px 0 0;
   cursor: pointer; max-width: 100%; text-overflow: ellipsis; }
 .focus-sel:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
@@ -299,7 +298,6 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 
 /* 지켜볼 유형 선택 창 */
 .kpi-focus { position: relative; }
-.kpi-focus.open { background: var(--tint); }
 .focus-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 0; font: inherit; font-size: 13px;
   font-weight: 600; color: var(--ink); cursor: pointer; max-width: 100%; }
 .focus-btn span { font-size: 14px; line-height: 1; color: var(--mid); transform: translateY(-2px); transition: transform .15s; }
@@ -334,3 +332,4 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .picker.menu { top: calc(100% + 6px); right: 0; width: 180px; padding: 6px; }
 .picker.menu .pk-item { padding: 8px 10px; grid-template-columns: minmax(0, 1fr) 0 16px; color: var(--ink); }
 .picker.menu .pk-item.on { font-weight: 600; }
+.kpi-focus:hover .focus-btn, .kpi-focus.open .focus-btn { text-decoration: underline; text-underline-offset: 4px; }
