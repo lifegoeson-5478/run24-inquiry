@@ -305,14 +305,23 @@ const sortGroups = (entries) => entries.sort((a, b) => (a[0] === 'OB유형') - (
 function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
 
 // 증감 배지: 상담은 줄어드는 게 좋아서 늘면 빨강, 줄면 초록
+// 두 보름 비교 설명 창
+function tipBox(lastP, prevP, a, b, note = '') {
+  const d = a - b;
+  return `<span class="tip" role="tooltip"><span class="tip-title">끝난 두 보름 비교</span>
+    <span class="tip-row"><span>${periodLabel(lastP)}</span><strong>${n(a)}건</strong></span>
+    <span class="tip-row"><span>${periodLabel(prevP)}</span><strong>${n(b)}건</strong></span>
+    <span class="tip-row tip-diff"><span>차이</span><strong>${d > 0 ? '+' : d < 0 ? '−' : ''}${n(Math.abs(d))}건</strong></span>
+    <span class="tip-note">${note || '진행 중인 이번 보름은 빼고 비교해요'}</span></span>`;
+}
 function delta(now, before, { words = false, tip = '' } = {}) {
-  const t = tip ? ` title="${esc(tip)}"` : '';
+  const t = tip ? ' tabindex="0"' : '', box = tip || '';
   const d = now - before;
   if (!before && !now) return '';
-  if (d === 0) return `<span class="delta flat"${t}>${words ? '그 전과 같아요' : '0'}</span>`;
+  if (d === 0) return `<span class="delta flat"${t}>${words ? '그 전과 같아요' : '0'}${box}</span>`;
   const pct = before ? Math.round((Math.abs(d) / before) * 100) : null;
   const txt = words ? `${n(Math.abs(d))}건 ${d > 0 ? '늘었어요' : '줄었어요'}` : `${d > 0 ? '+' : '−'}${n(Math.abs(d))}${pct !== null && before >= 10 ? ` (${pct}%)` : ''}`;
-  return `<span class="delta ${d > 0 ? 'up' : 'down'}"${t}>${d > 0 ? '↗' : '↘'} ${txt}</span>`;
+  return `<span class="delta ${d > 0 ? 'up' : 'down'}"${t}>${d > 0 ? '↗' : '↘'} ${txt}${box}</span>`;
 }
 
 // ── 모션: 화면이 처음 뜨거나 바뀔 때 차트가 차례로 그려지고 KPI 숫자가 올라간다. 기기의 '동작 줄이기'를 켜면 끈다.
@@ -677,7 +686,7 @@ function renderHome() {
   const focusShare = ranged.length ? Math.round((focusN / ranged.length) * 100) : 0;
   const focusLast = byP(last).filter(fm).length, focusPrev = byP(prev).filter(fm).length;
 
-  const cmp = (a, b, extra = '') => `${periodLabel(last)} ${n(a)}건 ↔ ${periodLabel(prev)} ${n(b)}건 비교 (진행 중인 이번 보름은 빼요)${extra}`;
+  const cmp = (a, b, note) => tipBox(last, prev, a, b, note);
   const roseType = rose && ((c) => c.types.includes(rose[0]));
   view.innerHTML = `
     ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${RANGES[S.range]} ${n(ranged.length)}건`)}
@@ -685,10 +694,10 @@ function renderHome() {
       <div class="kpi"><p>이번 보름 상담</p><b>${n(curN)}</b><span class="kpi-note">${periodLabel(cur)}, 진행 중</span></div>
       <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN, { tip: cmp(lastN, prevN) })}<span class="kpi-note">그 전 보름 대비</span></div>
       <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
-        ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '. 모든 세부 유형 중 가장 많이 늘었어요') }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
+        ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '모든 세부 유형 중 가장 많이 늘었어요') }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
       <div class="kpi kpi-focus" id="focus-kpi" title="눌러서 지켜볼 유형을 바꿀 수 있어요">
         <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
-        <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `. 위의 ${focusShare}%는 ${RANGES[S.range]} 전체 상담 중 비중이에요`) })}
+        <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `위의 ${focusShare}%는 ${RANGES[S.range]} 전체 상담 중 비중이에요`) })}
         <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span>${focusPicker(focus, ranged)}</div>
     </section>
 
@@ -753,7 +762,7 @@ function renderDetail() {
     ${pageHead(esc(title), V === 'type' ? esc(K) : '', { crumb })}
     <section class="kpis">
       ${kpi(RANGES[S.range], n(ranged.length), '', V !== 'all' ? `전체 상담의 ${Math.round((ranged.length / Math.max(1, allRanged)) * 100)}%` : '')}
-      ${kpi('지난 보름', n(cntP(last)), delta(cntP(last), cntP(prev), { tip: `${periodLabel(last)} ${n(cntP(last))}건 ↔ ${periodLabel(prev)} ${n(cntP(prev))}건 비교` }), periodLabel(last))}
+      ${kpi('지난 보름', n(cntP(last)), delta(cntP(last), cntP(prev), { tip: tipBox(last, prev, cntP(last), cntP(prev)) }), periodLabel(last))}
       ${kpi('이번 보름', n(cntP(cur)), '', `${periodLabel(cur)}, 진행 중`)}
       ${kpi('상담이 많은 매장', st.find(([s]) => s !== NO_STORE) ? `<span class="kpi-text">${esc(st.find(([s]) => s !== NO_STORE)[0])}</span>` : '-', '', st.find(([s]) => s !== NO_STORE) ? `${n(st.find(([s]) => s !== NO_STORE)[1])}건` : '')}
     </section>
