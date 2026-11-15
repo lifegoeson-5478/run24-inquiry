@@ -87,7 +87,7 @@ button { font: inherit; color: inherit; }
 .kpi-note { color: var(--soft); font-size: 12px; }
 
 /* 증감 배지 */
-.delta { align-self: flex-start; font-size: 12px; font-weight: 600; border-radius: 6px; padding: 1px 7px; }
+.delta { align-self: flex-start; cursor: help; font-size: 12px; font-weight: 600; border-radius: 6px; padding: 1px 7px; }
 .delta.up { color: var(--up); background: var(--up-bg); }
 .delta.down { color: var(--down); background: var(--down-bg); }
 .delta.flat { color: var(--mid); background: var(--tint); }
