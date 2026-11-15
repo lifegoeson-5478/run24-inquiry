@@ -52,6 +52,9 @@
   .spark { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: flex-end; gap: 1px; height: 26px; }
   .spark i { flex: 1; background: var(--accent); border-radius: 1px; min-height: 1px; }
   .spark i.cur { background: var(--bar-soft); }
+  .unk-sep { border-top: 1px solid var(--line); margin: 8px 8px 0; padding-top: 8px; font-size: 12px; }
+  .type.unk { opacity: .6; }
+  .type.unk .spark i { background: var(--muted); }
 
   .chg { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 7px; white-space: nowrap; }
   .chg.up { color: var(--up); background: var(--up-bg); }
@@ -71,6 +74,15 @@
   .trend .v { font-size: 12px; }
   .trend .l { font-size: 11px; color: var(--muted); white-space: nowrap; margin-top: 4px; line-height: 1.2; text-align: center; }
 
+  .trend .act { box-shadow: inset 0 -3px 0 var(--est); }
+  .trend .flag { font-size: 10px; font-weight: 700; color: #fff; background: var(--est); border-radius: 4px; padding: 0 4px; margin-bottom: 2px; }
+  .compare { margin: 0 0 10px; }
+  .acts { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 6px; font-size: 14px; }
+  .acts li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .link { border: 0; background: none; color: var(--muted); text-decoration: underline; padding: 0; font-size: 12px; }
+  .act-form { display: flex; gap: 8px; flex-wrap: wrap; }
+  .act-form input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  .act-form input[type=text] { flex: 1 1 220px; min-width: 0; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
   .chip:hover { border-color: var(--accent); }
@@ -116,6 +128,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_cuPnQYSO5_hIoNvfLovPPw_VFUnx0u4'; // �
 const COMPANY_DOMAIN = 'lifegoeson.kr'; // 화면 안내용. 실제 차단은 DB(RLS)에서 한다.
 const CHANNEL_DESK = (channelId, chatId) => `https://desk.channel.io/#/channels/${channelId}/user_chats/${chatId}`;
 const PAGE = 50;
+const UNKNOWN = '세부유형 미지정';
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const db = sb.schema('run24');
@@ -145,12 +158,23 @@ function change(now, before) {
   const diff = now - before;
   if (!before && !now) return '<span class="chg same">0</span>';
   if (diff === 0) return '<span class="chg same">변화 없음</span>';
-  const pct = before ? ` (${diff > 0 ? '+' : ''}${Math.round((diff / before) * 100)}%)` : '';
+  // 기준 건수가 적으면 %가 과장돼 보여서(1→7건 = +600%) 10건 이상일 때만 %를 붙인다.
+  const pct = before >= 10 ? ` (${diff > 0 ? '+' : ''}${Math.round((diff / before) * 100)}%)` : '';
   return `<span class="chg ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}${pct}</span>`;
 }
 
 // ── 화면 상태. URL 해시에 넣어서 링크로 공유할 수 있게 한다.
-const S = { periods: [], types: [], byType: new Map(), type: null, period: null, store: null, rows: null, shown: PAGE, email: '' };
+const S = { periods: [], types: [], byType: new Map(), actions: [], type: null, period: null, store: null, rows: null, shown: PAGE, email: '' };
+const todayKst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+
+// 가장 최근 조치를 기준으로, 조치한 보름을 빼고 그 전 3구간과 그 후(진행 중인 보름 제외) 최대 3구간의 평균을 비교한다.
+function beforeAfter(m, actedOn) {
+  const P = S.periods, cur = P.at(-1), ap = periodOf(new Date(actedOn)), i = P.indexOf(ap);
+  if (i < 0) return null;
+  const avg = (ps) => ps.length ? ps.reduce((s, p) => s + (m[p] || 0), 0) / ps.length : null;
+  const before = P.slice(Math.max(0, i - 3), i), after = P.slice(i + 1).filter((p) => p !== cur).slice(0, 3);
+  return { before: avg(before), after: avg(after), nBefore: before.length, nAfter: after.length };
+}
 function readHash() {
   let hash = location.hash;
   try { if (!hash.includes('type=')) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
@@ -186,10 +210,12 @@ function notCompany(email) {
 
 async function dashboard(email) {
   S.email = email;
-  const [{ data: rows, error }, { data: sync }] = await Promise.all([
+  const [{ data: rows, error }, { data: sync }, { data: actions }] = await Promise.all([
     db.from('type_half_month').select('device_type, period_start, cnt'),
     db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
+    db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on'),
   ]);
+  S.actions = actions || [];
   if (error) { app.innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
 
   const first = rows.reduce((a, r) => (r.period_start < a ? r.period_start : a), periodOf(new Date()));
@@ -203,7 +229,7 @@ async function dashboard(email) {
   const sum = (m, ps) => ps.reduce((s, p) => s + (m[p] || 0), 0);
   S.types = [...S.byType.entries()]
     .map(([name, m]) => ({ name, m, total: sum(m, recent), last: m[last] || 0, prev: m[prev] || 0 }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => (a.name === UNKNOWN) - (b.name === UNKNOWN) || b.total - a.total); // 미지정은 맨 아래
   const all = Object.fromEntries(P.map((p) => [p, S.types.reduce((s, t) => s + (t.m[p] || 0), 0)]));
   const grand = sum(all, recent);
 
@@ -225,7 +251,8 @@ async function dashboard(email) {
         <div class="hint muted">최근 3개월 많은 순 · 증감은 지난 보름과 그 전 보름 비교</div>
         ${S.types.map((t) => {
           const max = Math.max(1, ...P.map((p) => t.m[p] || 0)); // 유형마다 자기 최대값 기준
-          return `<button class="type" data-type="${esc(t.name)}">
+          return `${t.name === UNKNOWN ? '<div class="muted unk-sep">태그에 세부유형이 없고 내용으로도 알 수 없는 문의</div>' : ''}
+          <button class="type ${t.name === UNKNOWN ? 'unk' : ''}" data-type="${esc(t.name)}">
             <span class="name">${esc(t.name)}</span>
             <span class="spark" aria-hidden="true">${P.slice(-12).map((p) =>
               `<i class="${p === cur ? 'cur' : ''}" style="height:${((t.m[p] || 0) / max) * 100}%"></i>`).join('')}</span>
@@ -278,6 +305,36 @@ function renderDetail() {
   const max = Math.max(1, ...P.map((p) => t.m[p] || 0));
   const loaded = Array.isArray(S.rows);
 
+  // 개선 조치: 추이에 표시하고, 가장 최근 조치 기준으로 전후 평균을 비교한다.
+  const acts = S.actions.filter((a) => a.device_type === t.name).sort((a, b) => (a.acted_on < b.acted_on ? -1 : a.acted_on > b.acted_on ? 1 : 0));
+  const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
+  const latest = acts.at(-1);
+  let compare = '';
+  if (latest) {
+    const ba = beforeAfter(t.m, latest.acted_on);
+    const fmt = (v) => (v === null ? '-' : `${Math.round(v * 10) / 10}건`);
+    if (!ba) compare = '<p class="muted">조치일이 데이터 기간 밖이라 비교할 수 없어요.</p>';
+    else if (!ba.nAfter) compare = `<p class="muted">${esc(latest.acted_on)} 조치 이후 끝난 보름이 아직 없어요. 다음 보름이 끝나면 비교가 보여요.</p>`;
+    else {
+      const d = ba.before ? Math.round(((ba.after - ba.before) / ba.before) * 100) : null;
+      compare = `<p class="compare">최근 조치(${esc(latest.acted_on)}) 전 보름 평균 <b class="num">${fmt(ba.before)}</b> → 이후 <b class="num">${fmt(ba.after)}</b>
+        ${d === null ? '' : `<span class="chg ${d < 0 ? 'down' : d > 0 ? 'up' : 'same'}">${d > 0 ? '+' : ''}${d}%</span>`}
+        <span class="muted">(전 ${ba.nBefore}구간, 후 ${ba.nAfter}구간 · 조치한 보름은 제외)</span></p>`;
+    }
+  }
+  const actionsHtml = `
+    ${compare}
+    ${acts.length ? `<ul class="acts">${acts.slice().reverse().map((a) => `<li>
+      <span class="num">${esc(a.acted_on)}</span> <span>${esc(a.note) || '<span class="muted">(메모 없음)</span>'}</span>
+      <span class="muted">${esc(a.created_by.split('@')[0])}</span>
+      ${a.created_by === S.email ? `<button class="link" data-del="${a.id}" aria-label="조치 기록 삭제">삭제</button>` : ''}</li>`).join('')}</ul>`
+      : '<p class="muted">아직 기록이 없어요. 이 유형에 개선 조치를 했다면 날짜를 남겨 주세요. 추이 그래프에 표시돼요.</p>'}
+    <form class="act-form" id="act-form">
+      <input type="date" name="d" value="${todayKst()}" max="${todayKst()}" required aria-label="조치일">
+      <input type="text" name="n" maxlength="200" placeholder="무엇을 했나요? (예: 건조기 필터 전 매장 교체)" aria-label="조치 내용">
+      <button class="btn primary" type="submit">기록</button>
+    </form>`;
+
   // 매장별 건수: 선택한 기간이 있으면 그 기간 기준
   let storeChips = '<p class="muted">불러오는 중…</p>';
   if (loaded) {
@@ -321,10 +378,11 @@ function renderDetail() {
         <span class="muted">최근 3개월 ${t.total}건 · 지난 보름 ${t.last}건 ${change(t.last, t.prev)}</span>
       </div>
       <p class="muted" style="margin:6px 0 0">막대를 누르면 그 기간 문의만 볼 수 있어요. 연한 막대는 아직 진행 중인 보름이에요.</p>
-      <div class="trend">${P.map((p) => `<button class="${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${periodLabel(p)}: ${t.m[p] || 0}건">
-        <span class="v num">${t.m[p] || 0}</span><span class="bar" style="height:${((t.m[p] || 0) / max) * 100}%"></span>
+      <div class="trend">${P.map((p) => `<button class="${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''} ${actPeriods.has(p) ? 'act' : ''}" data-period="${p}" title="${periodLabel(p)}: ${t.m[p] || 0}건${actPeriods.has(p) ? ' · 개선 조치' : ''}">
+        ${actPeriods.has(p) ? '<span class="flag">조치</span>' : ''}<span class="v num">${t.m[p] || 0}</span><span class="bar" style="height:${((t.m[p] || 0) / max) * 100}%"></span>
         <span class="l">${shortLabel(p)}</span></button>`).join('')}</div>
     </div>
+    <div class="card"><h3>개선 조치</h3>${actionsHtml}</div>
     <div class="card"><h3>매장별 ${S.period ? `(${periodLabel(S.period)})` : '(전체 기간)'}</h3>${storeChips}</div>
     <div class="card"><h3>문의 목록</h3>${listHtml}</div>`;
 
@@ -333,7 +391,27 @@ function renderDetail() {
   for (const b of el.querySelectorAll('[data-store]')) b.onclick = () => { S.store = S.store === b.dataset.store ? null : b.dataset.store; S.shown = PAGE; writeHash(); renderDetail(); };
   for (const b of el.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = null; S.shown = PAGE; writeHash(); renderDetail(); };
   el.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; renderDetail(); });
+  el.querySelector('#act-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, btn = f.querySelector('button');
+    btn.disabled = true;
+    const { error } = await db.from('actions').insert({ device_type: t.name, acted_on: f.d.value, note: f.n.value.trim() });
+    if (error) { btn.disabled = false; alert('기록하지 못했어요: ' + error.message); return; }
+    await reloadActions();
+  };
+  for (const b of el.querySelectorAll('[data-del]')) b.onclick = async () => {
+    if (!confirm('이 조치 기록을 삭제할까요?')) return;
+    const { error } = await db.from('actions').delete().eq('id', Number(b.dataset.del));
+    if (error) { alert('삭제하지 못했어요: ' + error.message); return; }
+    await reloadActions();
+  };
   const trend = el.querySelector('.trend'); trend.scrollLeft = trend.scrollWidth; // 최근 구간이 보이게
+}
+
+async function reloadActions() {
+  const { data } = await db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on');
+  S.actions = data || [];
+  renderDetail();
 }
 
 async function route(session) {
