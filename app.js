@@ -67,19 +67,22 @@ const tally = (rules, chats) => rules.map(([label, re]) => [label, chats.filter(
 const tallyFirst = (rules, chats) => Object.entries(countBy(chats.filter((c) => textOf(c)), (c) => rules.find(([, re]) => re.test(textOf(c)))[0]));
 
 // ── 유형 묶음: 태그 이름 앞부분으로 비슷한 유형끼리 묶는다 (결제_환불문의/…, 결제문의_포인트 → 결제)
-const GROUPS = { 기기오작동: '기기 오작동', 결제: '결제·환불', 세탁: '세탁·수선', 수거: '수거·배송', 매장이용: '매장 이용', 주차등록: '주차', 기타: '기타 서비스', OB유형: '먼저 연락한 상담 (OB)' };
-const GROUP_COLOR = { 기기오작동: '#0E8C83', 결제: '#3A6EA5', 세탁: '#8E5A9B', 수거: '#B7791F', 매장이용: '#5E8B4F', 주차등록: '#7A8790', 기타: '#B5655A', OB유형: '#A7B3BB' };
+const GROUPS = { 기기오작동: '기기 오작동', 결제: '결제·환불', 세탁: '세탁·수선', 수거: '수거·배송', 매장이용: '매장 이용', 주차등록: '주차', 매장관리: '매장 관리', 기타: '기타 서비스', OB유형: '먼저 연락한 상담' };
 const MAL_GROUP = '기기오작동';
+// 흑백 단계: 많은 순으로 진한 회색부터
+const SHADES = ['#1F1F1F', '#4A4A4A', '#727272', '#9A9A9A', '#BDBDBD', '#D6D6D6', '#E6E6E6', '#EFEFEF'];
 const groupOf = (tag) => tag.split(/[/_]/)[0].replace(/문의$/, '');
+// 2026-11-15 이전에 저장된 오작동 세부유형('건조기오류', '세부유형 미지정')을 새 형식으로 읽는다.
+const LEGACY_MAL = /^(.+오류|.+미출력|이불함|AS안내|의류확인문의|세탁기오류_.+)$/;
+const normalizeTag = (t) => (t === '세부유형 미지정' ? '기기오작동문의' : !t.includes('/') && LEGACY_MAL.test(t) ? `기기오작동문의/${t}` : t);
 const groupLabel = (g) => GROUPS[g] || g;
-const groupColor = (g) => GROUP_COLOR[g] || '#A3B0B8';
-const tagColor = (t) => groupColor(groupOf(t));
+const groupColor = (g) => S.groupShade[g] || '#CFCFCF';
 const isParent = (t) => S.parents.has(t);
 const tagLabel = (t) => (t.includes('/') ? t.slice(t.indexOf('/') + 1) : isParent(t) ? `${t} (세부 없음)` : t);
 
 // ── 상태. 보는 화면과 필터는 URL 해시에 넣어 링크로 공유할 수 있게 한다.
 const S = {
-  email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(),
+  email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(), groupShade: {}, groupOrder: [],
   view: 'home', key: '', range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
 };
 const RANGES = { 30: '최근 1개월', 90: '최근 3개월', all: '전체 기간' };
@@ -108,7 +111,7 @@ function writeHash() {
 
 // ── 로그인
 function login() {
-  app.innerHTML = `<div class="gate"><h1>런24 상담 유형</h1>
+  app.innerHTML = `<div class="gate"><p class="gate-brand">런24 상담 유형</p><h1>로그인</h1>
     <p>회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
     <button class="btn primary" id="go">구글로 로그인</button></div>`;
   try { if (/v=/.test(location.hash)) sessionStorage.setItem('run24-hash', location.hash); } catch {}
@@ -117,38 +120,54 @@ function login() {
   });
 }
 function notCompany(email) {
-  app.innerHTML = `<div class="gate"><h1>볼 수 없는 계정이에요</h1>
+  app.innerHTML = `<div class="gate"><p class="gate-brand">런24 상담 유형</p><h1>볼 수 없는 계정이에요</h1>
     <p>${esc(email)} 계정은 볼 수 없어요. 회사 계정(@${COMPANY_DOMAIN})으로 다시 로그인해 주세요.</p>
     <button class="btn" id="out">로그아웃</button></div>`;
   document.getElementById('out').onclick = async () => { await sb.auth.signOut(); login(); };
 }
 
+// ── 화면 틀: 왼쪽 사이드바 + 오른쪽 본문
 async function shell(email) {
   S.email = email;
   readHash();
   const { data: ok } = await db.rpc('is_approver');
   S.approver = ok === true;
   if (ADMIN_PAGE && !S.approver) {
-    app.innerHTML = `<div class="gate"><h1>관리자만 들어올 수 있어요</h1>
+    app.innerHTML = `<div class="gate"><p class="gate-brand">런24 상담 유형</p><h1>관리자만 들어올 수 있어요</h1>
       <p>${esc(email)} 계정은 관리자로 등록되어 있지 않아요. 관리자에게 등록을 요청해 주세요.</p>
       <a class="btn" href="./">대시보드로 가기</a></div>`;
     return;
   }
   app.innerHTML = `
-    <header class="top">
-      <a class="brand" href="${ADMIN_PAGE ? './' : '#'}" id="home">런24 상담 유형</a>
-      <div class="top-right">
-        ${ADMIN_PAGE ? '<a href="./">대시보드</a>' : S.approver ? '<a href="admin.html">관리자</a>' : ''}
-        <span class="who">${esc(email.split('@')[0])}</span>
-        <a href="#" id="out">로그아웃</a>
-      </div>
-    </header>
-    <main id="view" class="view"><p class="loading">불러오는 중…</p></main>`;
+    <div class="frame">
+      <aside class="side" aria-label="메뉴">
+        <a class="side-brand" href="./">런24 상담 유형</a>
+        <nav id="nav"></nav>
+        <div class="side-foot"><span>${esc(email)}</span><a href="#" id="out">로그아웃</a></div>
+      </aside>
+      <main class="main"><div id="view" class="view"><p class="loading">불러오는 중…</p></div></main>
+    </div>`;
   document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
-  if (ADMIN_PAGE) return admins();
-  document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
+  if (ADMIN_PAGE) { renderNav(); return admins(); }
   await loadData();
   render();
+}
+
+function renderNav() {
+  const nav = document.getElementById('nav');
+  if (!nav) return;
+  const item = (label, attrs, on, extra = '') => `<button class="nav-item ${on ? 'on' : ''}" ${attrs}>${label}${extra}</button>`;
+  const here = (v, k = '') => !ADMIN_PAGE && S.view === v && (!k || S.key === k);
+  nav.innerHTML = ADMIN_PAGE
+    ? `<a class="nav-item" href="./">대시보드</a><span class="nav-item on">관리자</span>`
+    : `${item('대시보드', 'data-nav="home"', here('home'))}
+       ${item('전체 상담', 'data-nav="all"', here('all'))}
+       <p class="nav-head">유형 묶음</p>
+       ${S.groupOrder.map((g) => item(`<i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}`, `data-group="${esc(g)}"`,
+         here('group', g) || (S.view === 'type' && groupOf(S.key) === g))).join('')}
+       ${S.approver ? '<p class="nav-head">설정</p><a class="nav-item" href="admin.html">관리자</a>' : ''}`;
+  for (const b of nav.querySelectorAll('[data-nav]')) b.onclick = () => go(b.dataset.nav);
+  for (const b of nav.querySelectorAll('[data-group]')) b.onclick = () => go('group', b.dataset.group);
 }
 
 // ── 데이터: 유형/ 태그가 붙은 상담 전체를 한 번에 불러와 화면에서 집계한다 (수만 건 수준).
@@ -178,12 +197,16 @@ async function loadData() {
         summary: r.summary, first_message: r.first_message, types: [], groups: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
       byId.set(r.chat_id, c);
     }
-    c.types.push(r.device_type); tags.add(r.device_type);
-    const g = groupOf(r.device_type); if (!c.groups.includes(g)) c.groups.push(g);
+    const tag = normalizeTag(r.device_type);
+    if (!c.types.includes(tag)) c.types.push(tag);
+    tags.add(tag);
+    const g = groupOf(tag); if (!c.groups.includes(g)) c.groups.push(g);
     if (r.estimated) c.estimated = true;
   }
   S.chats = [...byId.values()].sort((a, b) => b.ms - a.ms);
   S.parents = new Set([...tags].filter((t) => !t.includes('/') && [...tags].some((o) => o.startsWith(t + '/'))));
+  S.groupOrder = sortGroups(Object.entries(countBy(S.chats, (c) => c.groups))).map(([g]) => g);
+  S.groupOrder.forEach((g, i) => (S.groupShade[g] = SHADES[Math.min(i, SHADES.length - 1)]));
 
   // 보름 구간: 수집 시작 보름은 일부 날짜만 있어 낮게 보이므로, 다음 보름의 30% 미만이면 뺀다.
   const now = periodOf(new Date());
@@ -202,13 +225,16 @@ function countBy(list, keyFn) {
 const inRange = (c) => S.range === 'all' || c.ms >= Date.now() - Number(S.range) * 86_400_000;
 const isMal = (c) => c.groups.includes(MAL_GROUP);
 const sortGroups = (entries) => entries.sort((a, b) => (a[0] === 'OB유형') - (b[0] === 'OB유형') || b[1] - a[1]);
-
 function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
-function changeWords(now, before) {
+
+// 증감 배지: 상담은 줄어드는 게 좋아서 늘면 빨강, 줄면 초록
+function delta(now, before, { words = false } = {}) {
   const d = now - before;
-  if (!now && !before) return '<span class="chg flat">문의 없음</span>';
-  if (d === 0) return '<span class="chg flat">그 전 보름과 같아요</span>';
-  return `<span class="chg ${d > 0 ? 'up' : 'down'}">그 전 보름보다 ${n(Math.abs(d))}건 ${d > 0 ? '늘었어요' : '줄었어요'}</span>`;
+  if (!before && !now) return '';
+  if (d === 0) return `<span class="delta flat">${words ? '그 전과 같아요' : '0'}</span>`;
+  const pct = before ? Math.round((Math.abs(d) / before) * 100) : null;
+  const txt = words ? `${n(Math.abs(d))}건 ${d > 0 ? '늘었어요' : '줄었어요'}` : `${d > 0 ? '+' : '−'}${n(Math.abs(d))}${pct !== null && before >= 10 ? ` (${pct}%)` : ''}`;
+  return `<span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '↗' : '↘'} ${txt}</span>`;
 }
 
 function go(view, key = '') {
@@ -217,22 +243,78 @@ function go(view, key = '') {
 }
 function render() {
   writeHash();
+  renderNav();
   if (S.view === 'home') renderHome(); else renderDetail();
 }
 
-// ── 공통 조각
-const rangeSelect = () => `<label class="range">기간 <select id="range">${Object.entries(RANGES).map(([k, v]) =>
+// ── 차트와 조각 (흑백)
+const rangeSelect = () => `<label class="select"><span class="sr">기간</span><select id="range">${Object.entries(RANGES).map(([k, v]) =>
   `<option value="${k}" ${S.range === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+const card = (title, sub, body, { cls = '', tools = '' } = {}) => `<section class="card ${cls}">
+  <div class="card-head"><div><h2>${title}</h2>${sub ? `<p class="card-sub">${sub}</p>` : ''}</div>${tools}</div>${body}</section>`;
 
-// entries: [[key, value]], label/color는 key로 계산
-function bars(entries, { onKey, color, label = (k) => k, dim, title } = {}) {
+function hbars(entries, { onKey, color, label = (k) => k, dim, title } = {}) {
   const top = Math.max(1, ...entries.map(([, v]) => v));
-  return `<ul class="bars">${entries.map(([k, v]) => `<li>
-    ${onKey ? `<button class="bar-row" data-${onKey}="${esc(k)}" ${title ? `title="${esc(title(k))}"` : ''}>` : '<div class="bar-row">'}
-      <span class="bar-label ${dim && dim(k) ? 'dim' : ''}">${esc(label(k))}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${(v / top) * 100}%;background:${color ? color(k) : 'var(--mint)'}"></span></span>
-      <span class="bar-val">${n(v)}건</span>
+  return `<ul class="hbars">${entries.map(([k, v]) => `<li>
+    ${onKey ? `<button class="hbar" data-${onKey}="${esc(k)}" ${title ? `title="${esc(title(k))}"` : ''}>` : '<div class="hbar">'}
+      <span class="hbar-label ${dim && dim(k) ? 'dim' : ''}">${esc(label(k))}</span>
+      <span class="hbar-track"><span style="width:${(v / top) * 100}%;background:${color ? color(k) : 'var(--ink)'}"></span></span>
+      <span class="hbar-val">${n(v)}</span>
     ${onKey ? '</button>' : '</div>'}</li>`).join('')}</ul>`;
+}
+
+// 요일별 막대: 가장 많은 요일만 진하게
+function weekdayBars(chats) {
+  const m = Array(7).fill(0); for (const c of chats) m[c.wd]++;
+  const max = Math.max(1, ...m), best = m.indexOf(Math.max(...m));
+  return `<div class="vbars">${m.map((v, i) => `<div class="vbar ${i === best ? 'top' : ''}" title="${WD_LABEL[i]}요일 ${n(v)}건">
+    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${(v / max) * 100}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>`;
+}
+
+// 상위 N개만 남기고 나머지는 '그 외'로 합친다
+const OTHER = '__other';
+const topN = (entries, k) => entries.length <= k + 1 ? entries : [...entries.slice(0, k), [OTHER, entries.slice(k).reduce((s, [, v]) => s + v, 0)]];
+const withOther = (fn, other) => (k) => (k === OTHER ? other : fn(k));
+
+// 도넛: 조각 사이에 틈을 둔 흑백 도넛
+function donut(all, { color, label, onKey } = {}) {
+  const entries = topN(all, 6);
+  color = withOther(color, '#E8E8E8'); label = withOther(label, '그 외');
+  const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
+  const R = 52, C = 2 * Math.PI * R, gap = 3;
+  let off = 0;
+  const arcs = entries.map(([k, v]) => {
+    const len = Math.max(0, (v / total) * C - gap);
+    const a = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${color(k)}" stroke-width="22" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}"><title>${esc(label(k))} ${n(v)}건</title></circle>`;
+    off += (v / total) * C; return a;
+  }).join('');
+  return `<div class="donut-wrap">
+    <svg class="donut" viewBox="0 0 140 140" role="img" aria-label="유형 묶음 비중"><g transform="rotate(-90 70 70)">${arcs}</g>
+      <text x="70" y="66" text-anchor="middle" class="donut-n">${n(total)}</text><text x="70" y="84" text-anchor="middle" class="donut-l">건</text></svg>
+    <ul class="legend">${entries.map(([k, v]) => `<li>${onKey && k !== OTHER ? `<button data-${onKey}="${esc(k)}">` : '<span>'}
+      <i style="background:${color(k)}"></i><span class="lg-l">${esc(label(k))}</span><span class="lg-v">${n(v)}</span><span class="lg-p">${Math.round((v / total) * 100)}%</span>
+      ${onKey && k !== OTHER ? '</button>' : '</span>'}</li>`).join('')}</ul></div>`;
+}
+
+// 보름별 누적 막대: 유형 묶음(또는 세부 유형)별 흑백 단계
+function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, label = groupLabel, actPeriods = new Set(), keys } = {}) {
+  const P = S.periods, cur = P.at(-1);
+  const all = keys || Object.keys(countBy(chats, keyFn));
+  const order = all.length > 6 ? [...all.slice(0, 5), OTHER] : all;
+  const top = new Set(order);
+  const kf = (c) => [].concat(keyFn(c)).map((k) => (top.has(k) ? k : OTHER));
+  color = withOther(color, '#E8E8E8'); label = withOther(label, '그 외');
+  const per = Object.fromEntries(P.map((p) => [p, countBy(chats.filter((c) => c.period === p), kf)]));
+  const tot = (p) => chats.filter((c) => c.period === p).length;
+  const max = Math.max(1, ...P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0)));
+  return `<div class="stack-trend">${P.map((p) => {
+    const sum = Object.values(per[p]).reduce((s, v) => s + v, 0);
+    return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
+      <span class="st-v">${n(tot(p))}</span>
+      <span class="st-bar" style="height:${(sum / max) * 100}%">${order.filter((k) => per[p][k]).map((k) =>
+        `<i style="flex:${per[p][k]};background:${color(k)}" title="${esc(label(k))} ${per[p][k]}건"></i>`).join('')}</span>
+      <span class="st-l">${shortLabel(p)}${actPeriods.has(p) ? '<b class="st-flag" aria-label="개선 조치">●</b>' : ''}</span></button>`;
+  }).join('')}</div>`;
 }
 
 function heatmap(chats) {
@@ -241,53 +323,41 @@ function heatmap(chats) {
   const max = Math.max(1, ...grid.flat());
   let best = [0, 0, 0];
   grid.forEach((row, d) => row.forEach((v, h) => { if (v > best[0]) best = [v, d, h]; }));
-  const hourLabels = Array.from({ length: 12 }, (_, i) => (i % 3 === 0 ? `${i * 2}시` : ''));
-  return `<div class="heat" role="img" aria-label="요일과 시간대별 문의 수. 가장 많은 때는 ${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시">
+  const nz = grid.flat().filter((v) => v).sort((a, b) => a - b);
+  const q = (f) => nz[Math.floor((nz.length - 1) * f)] ?? 0;
+  const cuts = [q(0.25), q(0.5), q(0.75)];
+  const level = (v) => (v === 0 ? 0 : 1 + cuts.filter((c) => v > c).length);
+  return `<div class="heat" role="img" aria-label="요일과 시간대별 상담 수. 가장 많은 때는 ${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시">
     <div class="heat-grid">
-      <span></span>${hourLabels.map((l) => `<span class="heat-h">${l}</span>`).join('')}
       ${grid.map((row, d) => `<span class="heat-d">${WD_LABEL[d]}</span>${row.map((v, h) =>
-        `<span class="tile" style="--a:${v / max}" title="${WD_LABEL[d]}요일 ${h * 2}~${h * 2 + 2}시: ${v}건"></span>`).join('')}`).join('')}
+        `<span class="tile l${level(v)}" title="${WD_LABEL[d]}요일 ${h * 2}~${h * 2 + 2}시: ${v}건"></span>`).join('')}`).join('')}
+      <span></span>${Array.from({ length: 12 }, (_, i) => `<span class="heat-h">${i % 2 === 0 ? `${i * 2}시` : ''}</span>`).join('')}
     </div>
-    ${best[0] ? `<p class="note">가장 많은 때는 <b>${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시</b>예요 (${n(best[0])}건).</p>` : ''}
+    <div class="heat-foot">${best[0] ? `<span>가장 많은 때는 <b>${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시</b></span>` : '<span></span>'}
+      <span class="heat-legend">적음 <i class="tile l0"></i><i class="tile l1"></i><i class="tile l2"></i><i class="tile l3"></i><i class="tile l4"></i> 많음</span></div>
   </div>`;
 }
 
-function trend(chats, { actPeriods = new Set() } = {}) {
-  const P = S.periods, cur = P.at(-1);
-  const m = countBy(chats, (c) => c.period);
-  const max = Math.max(1, ...P.map((p) => m[p] || 0));
-  return `<div class="trend" role="list">${P.map((p) => `<button role="listitem" class="t-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}"
-      title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${m[p] || 0}건${actPeriods.has(p) ? ' · 개선 조치' : ''}">
-      <span class="t-v">${m[p] || 0}</span>
-      <span class="t-bar" style="height:${((m[p] || 0) / max) * 100}%"></span>
-      <span class="t-l">${shortLabel(p)}${actPeriods.has(p) ? '<i class="t-flag" aria-label="개선 조치">●</i>' : ''}</span>
-    </button>`).join('')}</div>`;
-}
-
-const tagChip = (t) => `<button class="tag" data-type="${esc(t)}" style="--c:${tagColor(t)}" title="${esc(t)}">${esc(tagLabel(t))}</button>`;
+const tagChip = (t) => `<button class="tag" data-type="${esc(t)}" title="${esc(t)}"><i style="background:${groupColor(groupOf(t))}"></i>${esc(tagLabel(t))}</button>`;
 function chatRow(c) {
   return `<li class="chat">
     <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-      <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button></div>
+      <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button>
+      <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡</a></div>
     <p class="chat-text">${esc(c.summary || c.first_message) || '<span class="muted">(고객이 남긴 내용 없음)</span>'}</p>
-    <div class="chat-foot">
-      ${c.types.map(tagChip).join('')}
-      ${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정 유형</span>' : ''}
-      <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡에서 보기</a>
-    </div></li>`;
+    <div class="chat-foot">${c.types.map(tagChip).join('')}${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정</span>' : ''}</div></li>`;
 }
 
-// 기기 오작동 문의만 골라 증상과 처리 방식을 보여준다 (규칙이 오작동 상담에 맞춰져 있어서).
-function malPanel(chats, heading = '기기 오작동: 증상과 처리') {
+// 기기 오작동 문의만 골라 증상과 처리 방식 (규칙이 오작동 상담에 맞춰져 있어서)
+function malCard(chats, title = '기기 오작동 증상과 처리') {
   const mal = chats.filter(isMal);
   if (!mal.length) return '';
-  const sym = tally(SYMPTOMS, mal).slice(0, 7), res = tallyFirst(RESOLUTIONS, mal);
-  return `<section class="panel">
-    <h2>${heading}</h2>
-    <p class="sub">오작동 문의 ${n(mal.length)}건의 상담 요약에서 찾았어요. 증상은 한 문의에 여러 개일 수 있어요.</p>
-    <h3>고객이 겪은 증상</h3>${sym.length ? bars(sym) : '<p class="muted">찾은 증상이 없어요.</p>'}
-    <h3>어떻게 처리했나요</h3>${res.length ? bars(res, { color: () => 'var(--slate)' }) : '<p class="muted">-</p>'}
-  </section>`;
+  const sym = tally(SYMPTOMS, mal).slice(0, 6), res = tallyFirst(RESOLUTIONS, mal);
+  return card(title, `오작동 상담 ${n(mal.length)}건의 요약에서 찾았어요`, `
+    <div class="stacked">
+      <div><h3>증상</h3>${sym.length ? hbars(sym) : '<p class="muted">찾은 증상이 없어요.</p>'}</div>
+      <div><h3>처리</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
+    </div>`);
 }
 
 function bindCommon(root) {
@@ -297,96 +367,61 @@ function bindCommon(root) {
   for (const b of root.querySelectorAll('[data-store]')) b.onclick = () => go('store', b.dataset.store);
 }
 
-// 두 기간 사이 증감이 가장 큰 세부 유형 (상위 태그 제외)
 function movers(listA, listB) {
   const a = countBy(listA, (c) => c.types), b = countBy(listB, (c) => c.types);
   return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((t) => !isParent(t))
     .map((t) => [t, (a[t] || 0) - (b[t] || 0)]).sort((x, y) => y[1] - x[1]);
 }
 
-// ── 첫 화면
+function pageHead(title, sub, { crumb = '' } = {}) {
+  const updated = S.sync?.last_synced_at ? kst(S.sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+  return `<div class="page-head">
+    <div>${crumb ? `<nav class="crumb">${crumb}</nav>` : ''}<h1>${title}</h1>${sub ? `<p class="page-sub">${sub}</p>` : ''}</div>
+    <div class="page-tools"><span class="updated">${updated} 갱신</span>${rangeSelect()}</div></div>
+    ${S.sync?.last_error ? `<p class="warn">최근 갱신에 실패해서 숫자가 최신이 아닐 수 있어요. (${esc(S.sync.last_error)})</p>` : ''}`;
+}
+
+// ── 대시보드 (첫 화면)
 function renderHome() {
   const view = document.getElementById('view');
   const { cur, last, prev } = halves();
   const all = S.chats, ranged = all.filter(inRange);
   const byP = (p) => all.filter((c) => c.period === p);
-  const curN = byP(cur).length, lastN = byP(last).length;
-
-  const today = kparts(new Date());
-  const startDay = cur.endsWith('01') ? 1 : 16;
-  const lenDays = cur.endsWith('01') ? 15 : new Date(+today.y, +today.m, 0).getDate() - 15;
-  const elapsed = today.d - startDay + 1;
-  const projected = Math.round((curN / elapsed) * lenDays);
-
-  const mv = movers(byP(last), byP(prev));
-  const rose = mv[0], fell = mv.at(-1);
-  const storeTotals = countBy(ranged.filter((c) => c.store !== NO_STORE), (c) => c.store);
-  const [topStore, topStoreN] = Object.entries(storeTotals)[0] || [];
-  const topStoreTag = topStore ? Object.entries(countBy(ranged.filter((c) => c.store === topStore), (c) => c.types))[0] : null;
-
+  const curN = byP(cur).length, lastN = byP(last).length, prevN = byP(prev).length;
+  const mv = movers(byP(last), byP(prev)), rose = mv[0];
   const groupTotals = sortGroups(Object.entries(countBy(ranged, (c) => c.groups)));
-  const groupMax = Math.max(1, ...groupTotals.map(([, v]) => v));
-  const storeEntries = Object.entries(storeTotals).slice(0, 10);
+  const storeTotals = countBy(ranged.filter((c) => c.store !== NO_STORE), (c) => c.store);
+  const storeEntries = Object.entries(storeTotals).slice(0, 8);
+  const malShare = ranged.length ? Math.round((ranged.filter(isMal).length / ranged.length) * 100) : 0;
 
   view.innerHTML = `
-    <section class="brief">
-      <p class="brief-when">${periodLabel(cur)} · ${elapsed}일째</p>
-      <h1 class="brief-head">이번 보름 들어온 상담은 지금까지 <b>${n(curN)}건</b>이에요.
-        ${!lastN ? '' : elapsed >= lenDays
-          ? `지난 보름(${n(lastN)}건)보다 ${curN === lastN ? '같아요' : `${n(Math.abs(curN - lastN))}건 ${curN > lastN ? '많아요' : '적어요'}`}.`
-          : elapsed >= 3 ? `이 속도면 ${n(projected)}건쯤으로, 지난 보름(${n(lastN)}건)보다 ${projected > lastN ? '많을' : projected < lastN ? '적을' : '비슷할'} 것 같아요.` : ''}</h1>
-      <ul class="brief-points">
-        ${rose && rose[1] > 0 ? `<li>지난 보름 가장 많이 늘어난 건 ${groupLabel(groupOf(rose[0]))}의 <button class="linkish strong" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>예요. 그 전 보름보다 ${n(rose[1])}건 늘었어요.</li>` : ''}
-        ${fell && fell[1] < 0 ? `<li>가장 많이 줄어든 건 ${groupLabel(groupOf(fell[0]))}의 <button class="linkish strong" data-type="${esc(fell[0])}">${esc(tagLabel(fell[0]))}</button>예요. ${n(-fell[1])}건 줄었어요.</li>` : ''}
-        ${topStore ? `<li>${RANGES[S.range]} 상담이 가장 많은 매장은 <button class="linkish strong" data-store="${esc(topStore)}">${esc(topStore)}</button>이에요. ${n(topStoreN)}건 중 ${esc(tagLabel(topStoreTag?.[0] ?? ''))}가 ${n(topStoreTag?.[1])}건이에요.</li>` : ''}
-      </ul>
-      ${S.sync?.last_error ? `<p class="warn">최근 갱신에 실패해서 숫자가 최신이 아닐 수 있어요. (${esc(S.sync.last_error)})</p>` : ''}
+    ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${RANGES[S.range]} ${n(ranged.length)}건`)}
+    <section class="kpis">
+      <div class="kpi"><p>이번 보름 상담</p><b>${n(curN)}</b><span class="kpi-note">${periodLabel(cur)}, 진행 중</span></div>
+      <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN)}<span class="kpi-note">그 전 보름 대비</span></div>
+      <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
+        ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true }) : ''}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
+      <div class="kpi"><p>기기 오작동 비중</p><b>${malShare}<small>%</small></b><span class="kpi-note">${RANGES[S.range]} 전체 상담 중</span></div>
     </section>
 
-    <div class="toolbar">${rangeSelect()}<span class="muted">${n(ranged.length)}건 · 마지막 갱신 ${S.sync?.last_synced_at ? kst(S.sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'} (매일 새벽 4시)</span></div>
-
-    <section class="panel wide">
-      <h2>어떤 상담이 많나요</h2>
-      <p class="sub">비슷한 유형끼리 묶었어요. 묶음을 누르면 세부 유형과 매장, 시간대를 볼 수 있어요. 한 상담에 유형이 여러 개면 각각 세요.</p>
-      <ul class="groups">${groupTotals.map(([g, v]) => {
-        const subs = Object.entries(countBy(ranged.filter((c) => c.groups.includes(g)), (c) => c.types.filter((t) => groupOf(t) === g))).slice(0, 4);
-        return `<li><button class="group-row" data-group="${esc(g)}">
-          <span class="g-name"><i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}</span>
-          <span class="bar-track"><span class="bar-fill" style="width:${(v / groupMax) * 100}%;background:${groupColor(g)}"></span></span>
-          <span class="bar-val">${n(v)}건</span>
-          <span class="g-subs">${subs.map(([t, k]) => `${esc(tagLabel(t))} ${n(k)}`).join(' · ')}</span>
-        </button></li>`;
-      }).join('')}</ul>
-    </section>
-
-    <div class="grid">
-      <section class="panel">
-        <h2>어느 매장에서 많이 생기나요</h2>
-        <p class="sub">막대 색은 그 매장 상담의 유형 묶음 구성이에요.</p>
-        <ul class="stores">${storeEntries.map(([s, v]) => {
-          const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
-          return `<li><button class="store-row" data-store="${esc(s)}">
-            <span class="bar-label">${esc(s)}</span>
-            <span class="stack" style="width:${(v / storeEntries[0][1]) * 100}%">${comp.map(([g, k]) => `<i style="flex:${k};background:${groupColor(g)}" title="${esc(groupLabel(g))} ${k}건"></i>`).join('')}</span>
-            <span class="bar-val">${n(v)}건</span></button></li>`;
-        }).join('')}</ul>
-        <p class="legend">${groupTotals.slice(0, 7).map(([g]) => `<span><i class="dot" style="background:${groupColor(g)}"></i>${esc(groupLabel(g))}</span>`).join('')}</p>
-      </section>
-      <section class="panel">
-        <h2>언제 많이 생기나요</h2>
-        <p class="sub">요일과 시간대별 상담 수예요. 진할수록 많아요.</p>
-        ${heatmap(ranged)}
-      </section>
-      ${malPanel(ranged)}
-      <section class="panel">
-        <h2>최근 들어온 상담</h2>
-        <ul class="chats compact">${all.slice(0, 6).map(chatRow).join('')}</ul>
-        <button class="btn" id="more-chats">전체 상담 보기</button>
-      </section>
+    <div class="cards">
+      ${card('유형 묶음 비중', `${RANGES[S.range]} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group' }), { cls: 'span-2' })}
+      ${card('요일별 상담', RANGES[S.range], weekdayBars(ranged))}
+      ${card('보름별 상담', '막대 안의 회색 단계는 유형 묶음이에요', stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
+      ${card('매장 TOP 8', '상담이 많은 매장이에요. 막대는 유형 묶음 구성이에요', `<ul class="stores">${storeEntries.map(([s, v]) => {
+        const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
+        return `<li><button class="store-row" data-store="${esc(s)}"><span class="hbar-label">${esc(s)}</span>
+          <span class="stack" style="width:${(v / storeEntries[0][1]) * 100}%">${comp.map(([g, k]) => `<i style="flex:${k};background:${groupColor(g)}" title="${esc(groupLabel(g))} ${k}건"></i>`).join('')}</span>
+          <span class="hbar-val">${n(v)}</span></button></li>`;
+      }).join('')}</ul>`)}
+      ${card('시간대별 상담', '요일과 시간대별로 진할수록 많아요', heatmap(ranged))}
+      ${malCard(ranged)}
+      ${card('최근 상담', '', `<ul class="chats compact">${all.slice(0, 5).map(chatRow).join('')}</ul><button class="btn ghost" id="more-chats">전체 상담 보기</button>`, { cls: 'span-3' })}
     </div>`;
 
   bindCommon(view);
   view.querySelector('#more-chats').onclick = () => go('all');
+  for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { go('all'); S.period = b.dataset.period; render(); };
 }
 
 // ── 상세: 묶음 하나 / 세부 유형 하나 / 매장 하나 / 전체 상담
@@ -398,9 +433,8 @@ function renderDetail() {
   const { cur, last, prev } = halves();
   const cntP = (p) => base.filter((c) => c.period === p).length;
   const title = V === 'group' ? groupLabel(K) : V === 'type' ? tagLabel(K) : V === 'store' ? K : '전체 상담';
-  const crumb = V === 'type' ? `<button class="linkish" data-group="${esc(groupOf(K))}">${esc(groupLabel(groupOf(K)))}</button> <span aria-hidden="true">/</span> 세부 유형`
-    : V === 'group' ? '유형 묶음' : V === 'store' ? '매장' : '상담';
-  const color = V === 'group' ? groupColor(K) : V === 'type' ? tagColor(K) : '';
+  const crumb = `<button class="linkish" id="back">대시보드</button>${V === 'type' ? ` / <button class="linkish" data-group="${esc(groupOf(K))}">${esc(groupLabel(groupOf(K)))}</button>` : ''}`;
+  const allRanged = S.chats.filter(inRange).length;
 
   const acts = V === 'type' ? S.actions.filter((a) => a.device_type === K).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
   const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
@@ -410,56 +444,46 @@ function renderDetail() {
     .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
       && (!q || `${c.summary || ''} ${c.first_message || ''} ${c.store}`.includes(q)));
 
-  // 왼쪽 패널: 무엇으로 나눠 볼지
-  let side;
-  if (V === 'group') {
-    const subs = Object.entries(countBy(ranged, (c) => c.types.filter((t) => groupOf(t) === K)));
-    side = `<h2>세부 유형</h2><p class="sub">누르면 그 유형만 자세히 볼 수 있어요.</p>
-      ${bars(subs, { onKey: 'type', color: tagColor, label: tagLabel, dim: isParent, title: (k) => k })}`;
-  } else if (V === 'all') {
-    side = `<h2>유형 묶음</h2>${bars(sortGroups(Object.entries(countBy(ranged, (c) => c.groups))), { onKey: 'group', color: groupColor, label: groupLabel })}`;
-  } else if (V === 'store') {
-    side = `<h2>이 매장의 상담 유형</h2><p class="sub">누르면 아래 목록을 그 유형으로 거를 수 있어요.</p>
-      ${bars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 12), { onKey: 'filter-type', color: tagColor, label: tagLabel, dim: isParent, title: (k) => k })}`;
-  }
-  const storeList = (() => {
-    const st = Object.entries(countBy(ranged, (c) => c.store)).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
-    return `<h2>매장 순위</h2><p class="sub">누르면 아래 목록을 그 매장으로 거를 수 있어요.</p>
-      ${bars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
-      ${st.length > 10 ? `<button class="linkish" id="all-stores">${S.allStores ? '접기' : `${n(st.length)}곳 모두 보기`}</button>` : ''}`;
-  })();
+  // 무엇으로 나눠 볼지: 묶음 → 세부 유형, 매장·전체 → 유형 묶음
+  const subKey = V === 'group' ? (c) => c.types.filter((t) => groupOf(t) === K) : (c) => c.groups;
+  const subEntries = V === 'type' ? [] : (V === 'group' ? Object.entries(countBy(ranged, subKey)) : sortGroups(Object.entries(countBy(ranged, subKey))));
+  const subShade = Object.fromEntries(subEntries.map(([k], i) => [k, SHADES[Math.min(i, SHADES.length - 1)]]));
+  const subColor = V === 'group' ? (k) => subShade[k] || '#CFCFCF' : groupColor;
+  const subLabel = V === 'group' ? tagLabel : groupLabel;
+
+  const st = Object.entries(countBy(ranged, (c) => c.store)).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
+  const storeCard = V === 'store' ? '' : card('매장 순위', '누르면 아래 목록을 그 매장으로 거를 수 있어요',
+    `${hbars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
+     ${st.length > 10 ? `<button class="linkish more-link" id="all-stores">${S.allStores ? '접기' : `${n(st.length)}곳 모두 보기`}</button>` : ''}`);
+
+  const kpi = (label, val, extra = '', note = '') => `<div class="kpi"><p>${label}</p><b>${val}</b>${extra}<span class="kpi-note">${note}</span></div>`;
 
   view.innerHTML = `
-    <nav class="crumb"><a href="#" id="back">전체 보기</a> <span aria-hidden="true">/</span> ${crumb}</nav>
-    <section class="detail-head">
-      ${color ? `<span class="swatch" style="background:${color}" aria-hidden="true"></span>` : ''}
-      <h1>${esc(title)}</h1>
-      ${V === 'type' ? `<p class="fullname">${esc(K)}</p>` : ''}
-      <p>${RANGES[S.range]} <b>${n(ranged.length)}건</b>${V !== 'all' ? ` (전체 상담의 ${Math.round((ranged.length / Math.max(1, S.chats.filter(inRange).length)) * 100)}%)` : ''}.
-        지난 보름(${periodLabel(last)})은 ${n(cntP(last))}건으로 ${changeWords(cntP(last), cntP(prev))}.
-        이번 보름은 지금까지 ${n(cntP(cur))}건이에요.</p>
-    </section>
-    <div class="toolbar">${rangeSelect()}</div>
-
-    <section class="panel wide">
-      <h2>보름별 추이</h2>
-      <p class="sub">막대를 누르면 그 보름의 상담만 아래에 보여요. 빗금 막대는 아직 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}</p>
-      ${trend(base, { actPeriods })}
-      ${V === 'type' ? actionsBlock(base, acts) : ''}
+    ${pageHead(esc(title), V === 'type' ? esc(K) : '', { crumb })}
+    <section class="kpis">
+      ${kpi(RANGES[S.range], n(ranged.length), '', V !== 'all' ? `전체 상담의 ${Math.round((ranged.length / Math.max(1, allRanged)) * 100)}%` : '')}
+      ${kpi('지난 보름', n(cntP(last)), delta(cntP(last), cntP(prev)), periodLabel(last))}
+      ${kpi('이번 보름', n(cntP(cur)), '', `${periodLabel(cur)}, 진행 중`)}
+      ${kpi('상담이 많은 매장', st.find(([s]) => s !== NO_STORE) ? `<span class="kpi-text">${esc(st.find(([s]) => s !== NO_STORE)[0])}</span>` : '-', '', st.find(([s]) => s !== NO_STORE) ? `${n(st.find(([s]) => s !== NO_STORE)[1])}건` : '')}
     </section>
 
-    <div class="grid">
-      ${side ? `<section class="panel">${side}</section>` : ''}
-      ${V !== 'store' ? `<section class="panel">${storeList}</section>` : ''}
-      <section class="panel">
-        <h2>언제 많이 생기나요</h2>
-        ${heatmap(ranged)}
-      </section>
-      ${malPanel(ranged, V === 'group' && K === MAL_GROUP || V === 'type' && groupOf(K) === MAL_GROUP ? '증상과 처리' : '기기 오작동: 증상과 처리')}
+    <div class="cards">
+      ${card('보름별 추이', `막대를 누르면 그 보름의 상담만 아래에 보여요. 빗금은 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}`,
+        `${V === 'type' ? stackedTrend(base, { keyFn: () => ['x'], color: () => 'var(--ink)', label: () => title, actPeriods })
+          : stackedTrend(base, { keyFn: subKey, color: subColor, label: subLabel, keys: subEntries.map(([k]) => k) })}
+         ${V === 'type' ? actionsBlock(base, acts) : ''}`, { cls: 'span-3' })}
+      ${subEntries.length ? card(V === 'group' ? '세부 유형' : '유형 묶음', V === 'group' ? '누르면 그 유형만 자세히 볼 수 있어요' : '',
+        donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group' }), { cls: 'span-2' }) : ''}
+      ${V === 'store' ? card('이 매장의 세부 유형', '누르면 아래 목록을 거를 수 있어요',
+        hbars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 10), { onKey: 'filter-type', color: (k) => groupColor(groupOf(k)), label: tagLabel, dim: isParent, title: (k) => k })) : ''}
+      ${card('요일별 상담', RANGES[S.range], weekdayBars(ranged))}
+      ${storeCard}
+      ${card('시간대별 상담', '진할수록 많아요', heatmap(ranged))}
+      ${malCard(ranged, V === 'group' && K === MAL_GROUP || V === 'type' && groupOf(K) === MAL_GROUP ? '증상과 처리' : '기기 오작동 증상과 처리')}
     </div>
 
-    <section class="panel wide" id="list">
-      <h2>상담 ${n(listed.length)}건</h2>
+    <section class="card list-card" id="list">
+      <div class="card-head"><div><h2>상담 ${n(listed.length)}건</h2><p class="card-sub">요약을 읽고, 자세한 대화는 채널톡에서 확인하세요</p></div></div>
       <div class="filters">
         <input type="search" id="q" value="${esc(q)}" placeholder="내용으로 찾기 (예: 탈수, 환불, 입고)" aria-label="상담 내용으로 찾기">
         ${S.period ? `<button class="pill" data-clear="period">${periodLabel(S.period)} ✕</button>` : ''}
@@ -467,12 +491,12 @@ function renderDetail() {
         ${S.type ? `<button class="pill" data-clear="type">${esc(tagLabel(S.type))} ✕</button>` : ''}
       </div>
       ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map(chatRow).join('')}</ul>
-        ${listed.length > S.shown ? `<button class="btn" id="more">${n(listed.length - S.shown)}건 더 보기</button>` : ''}`
-        : '<p class="muted">조건에 맞는 상담이 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
+        ${listed.length > S.shown ? `<button class="btn ghost" id="more">${n(listed.length - S.shown)}건 더 보기</button>` : ''}`
+        : '<p class="muted empty">조건에 맞는 상담이 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
     </section>`;
 
   bindCommon(view);
-  view.querySelector('#back').onclick = (e) => { e.preventDefault(); go('home'); };
+  view.querySelector('#back').onclick = () => go('home');
   const relist = (scroll) => { S.shown = PAGE; render(); if (scroll) document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
   for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? '' : b.dataset.period; relist(true); };
   for (const b of view.querySelectorAll('[data-filter-store]')) b.onclick = () => { S.store = S.store === b.dataset.filterStore ? '' : b.dataset.filterStore; relist(true); };
@@ -484,7 +508,7 @@ function renderDetail() {
   let timer;
   qi.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { S.q = qi.value; S.shown = PAGE; S.qFocus = true; render(); }, 250); };
   if (S.qFocus) { S.qFocus = false; const el = document.getElementById('q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  const tr = view.querySelector('.trend'); tr.scrollLeft = tr.scrollWidth;
+  for (const tr of view.querySelectorAll('.stack-trend')) tr.scrollLeft = tr.scrollWidth;
   if (V === 'type') bindActions(view);
 }
 
@@ -547,9 +571,8 @@ async function admins() {
   if (error) { view.innerHTML = `<p class="warn">관리자 목록을 불러오지 못했어요: ${esc(error.message)}</p>`; return; }
   const me = S.email.toLowerCase();
   view.innerHTML = `
-    <section class="detail-head"><h1>관리자</h1>
-      <p>관리자는 이 페이지에서 다른 관리자를 등록하거나 뺄 수 있어요. 회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있어요.</p></section>
-    <section class="panel wide">
+    <div class="page-head"><div><h1>관리자</h1><p class="page-sub">관리자는 이 페이지에서 다른 관리자를 등록하거나 뺄 수 있어요. 회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있어요.</p></div></div>
+    <section class="card">
       <form class="act-form" id="admin-form">
         <input type="email" name="e" required placeholder="이름@${COMPANY_DOMAIN}" aria-label="추가할 관리자 이메일">
         <button class="btn primary" type="submit">관리자 추가</button>
