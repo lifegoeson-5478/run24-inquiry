@@ -86,6 +86,8 @@
   .list .d { white-space: nowrap; }
   .list .s { white-space: nowrap; }
   .list .go { white-space: nowrap; text-align: right; }
+  .list .sum { font-weight: 500; }
+  .list .orig { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
   .badge { display: inline-block; font-size: 11px; color: var(--est); border: 1px solid var(--est); border-radius: 999px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }
   .more { width: 100%; margin-top: 10px; }
 
@@ -257,7 +259,7 @@ async function pick(type, userClick, keepFilters) {
   const rows = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db.from('chat_list')
-      .select('chat_id, channel_id, opened_at, store, first_message, estimated')
+      .select('chat_id, channel_id, opened_at, store, first_message, estimated, summary')
       .eq('device_type', type).order('opened_at', { ascending: false }).range(from, from + 999);
     if (S.type !== type) return;
     if (error) { S.rows = { error: error.message }; return renderDetail(); }
@@ -299,11 +301,13 @@ function renderDetail() {
         ${S.period ? `<span class="filter">${periodLabel(S.period)}<button data-clear="period" aria-label="기간 필터 해제">✕</button></span>` : ''}
         ${S.store ? `<span class="filter">${esc(S.store)}<button data-clear="store" aria-label="매장 필터 해제">✕</button></span>` : ''}
       </div>
-      ${rows.length ? `<table class="list"><thead><tr><th>날짜</th><th class="s">매장</th><th>고객 메시지</th><th></th></tr></thead><tbody>
+      ${rows.length ? `<table class="list"><thead><tr><th>날짜</th><th class="s">매장</th><th>상담 내용</th><th></th></tr></thead><tbody>
       ${rows.slice(0, S.shown).map((r) => `<tr>
         <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${kst(r.opened_at, { hour: '2-digit', minute: '2-digit' })}</span></td>
         <td class="s">${esc(r.store)}</td>
-        <td class="m"><span class="store">${esc(r.store)}</span>${esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge" title="태그에 세부유형이 없어 메시지 내용으로 추정했어요">추정</span>' : ''}</td>
+        <td class="m"><span class="store">${esc(r.store)}</span>${r.summary
+          ? `<span class="sum">${esc(r.summary)}</span>${r.first_message ? `<span class="orig">고객: ${esc(r.first_message)}</span>` : ''}`
+          : esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge" title="태그에 세부유형이 없어 메시지 내용으로 추정했어요">추정</span>' : ''}</td>
         <td class="go"><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a></td>
       </tr>`).join('')}</tbody></table>
       ${rows.length > S.shown ? `<button class="btn more" id="more">더 보기 (${(rows.length - S.shown).toLocaleString()}건 남음)</button>` : ''}`
