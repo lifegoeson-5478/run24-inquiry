@@ -231,7 +231,7 @@ async function loadData() {
     if (!c) {
       const p = kparts(new Date(r.opened_at));
       c = { id: r.chat_id, channel_id: r.channel_id, opened_at: r.opened_at, ms: Date.parse(r.opened_at), store: r.store || NO_STORE,
-        types: [], groups: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
+        types: [], groups: [], estimated: false, period: periodOfParts(p), month: `${p.y}-${p.m}`, week: mondayOf(p), wd: p.wd, h: p.h };
       byId.set(r.chat_id, c);
     }
     const tag = normalizeTag(r.device_type);
@@ -402,7 +402,7 @@ function bindRangeMenu(root) {
   btn.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); open(); } };
   menu.onclick = (e) => {
     const it = e.target.closest('.pk-item'); if (!it) return;
-    close(false); S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); document.getElementById('range-btn')?.focus();
+    close(false); if (UNIT[it.dataset.range] !== UNIT[S.range]) S.period = ''; S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); document.getElementById('range-btn')?.focus();
   };
   menu.onkeydown = (e) => {
     const list = items(), i = list.indexOf(document.activeElement);
@@ -473,25 +473,61 @@ function donut(all, { color, label, onKey } = {}) {
       ${onKey && k !== OTHER ? '</button>' : '</span>'}</li>`).join('')}</ul></div>`;
 }
 
-// 보름별 누적 막대: 유형 묶음(또는 세부 유형)별 흑백 단계
+// ── 추이 단위: 기간 설정에 따라 주·보름·월로 나눈다
+const DAY_MS = 86_400_000;
+const UNIT = { 30: 'week', 90: 'half', 180: 'month', 365: 'month', all: 'month' };
+const UNIT_LABEL = { week: '주', half: '보름', month: '월' };
+const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+function mondayOf(p) { return ymd(Date.UTC(+p.y, +p.m - 1, p.d - p.wd)); } // 한국 날짜 기준 그 주의 월요일
+const bucketOf = (c, u) => (u === 'week' ? c.week : u === 'half' ? c.period : c.month);
+const bucketOfDate = (date, u) => { const p = kparts(date); return u === 'week' ? mondayOf(p) : u === 'half' ? periodOfParts(p) : `${p.y}-${p.m}`; };
+function monthsBetween(a, b) {
+  const out = []; let [y, m] = a.split('-').map(Number);
+  for (let k = a; k <= b; ) { out.push(k); m++; if (m > 12) { m = 1; y++; } k = `${y}-${String(m).padStart(2, '0')}`; }
+  return out;
+}
+function buckets() {
+  const u = UNIT[S.range], now = new Date();
+  if (u === 'week') {
+    const cur = bucketOfDate(now, 'week');
+    const keys = Array.from({ length: 5 }, (_, i) => ymd(Date.parse(cur) - (4 - i) * 7 * DAY_MS));
+    return { u, keys, label: (k) => `${+k.slice(5, 7)}/${+k.slice(8)}~`, long: (k) => `${+k.slice(5, 7)}월 ${+k.slice(8)}일부터 한 주` };
+  }
+  if (u === 'half') {
+    const start = periodOf(new Date(now - 90 * DAY_MS));
+    return { u, keys: S.periods.filter((x) => x >= start), label: shortLabel, long: periodLabel };
+  }
+  const cur = bucketOfDate(now, 'month');
+  // 수집을 시작한 날(가장 오래된 상담). 그 달 중간부터 모였으면 그 달은 일부만 있어 낮게 보이므로 뺀다.
+  const firstMs = S.chats.length ? S.chats[S.chats.length - 1].ms : now.getTime();
+  const fp = kparts(new Date(firstMs)), firstMonth = `${fp.y}-${fp.m}`;
+  let start = S.range === 'all' ? firstMonth : bucketOfDate(new Date(now - Number(S.range) * DAY_MS), 'month');
+  if (start < firstMonth) start = firstMonth;
+  if (start === firstMonth && fp.d > 3 && start < cur) start = monthsBetween(start, cur)[1];
+  const keys = monthsBetween(start, cur);
+  return { u, keys, label: (k) => (k === keys[0] || k.endsWith('-01') ? `${k.slice(2, 4)}년 ${+k.slice(5)}월` : `${+k.slice(5)}월`), long: (k) => `${k.slice(0, 4)}년 ${+k.slice(5)}월` };
+}
+
+// 기간별 누적 막대: 유형 묶음(또는 세부 유형)별 흑백 단계
 function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, label = groupLabel, actPeriods = new Set(), keys } = {}) {
-  const P = S.periods, cur = P.at(-1);
+  const B = buckets(), P = B.keys, cur = P.at(-1);
+  chats = chats.filter((c) => P.includes(bucketOf(c, B.u)));
   const all = keys || Object.keys(countBy(chats, keyFn));
   const order = all.length > 6 ? [...all.slice(0, 5), OTHER] : all;
   const top = new Set(order);
   const kf = (c) => [].concat(keyFn(c)).map((k) => (top.has(k) ? k : OTHER));
   color = withOther(color, '#E8E8E8'); label = withOther(label, '그 외');
-  const per = Object.fromEntries(P.map((p) => [p, countBy(chats.filter((c) => c.period === p), kf)]));
-  const tot = (p) => chats.filter((c) => c.period === p).length;
+  const per = Object.fromEntries(P.map((p) => [p, countBy(chats.filter((c) => bucketOf(c, B.u) === p), kf)]));
+  const tot = (p) => chats.filter((c) => bucketOf(c, B.u) === p).length;
   const sums = P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0));
-  const sc = barScale(sums, [P.length - 1]); // 진행 중인 보름은 기준에서 뺀다
+  const sc = barScale(sums, [P.length - 1]); // 진행 중인 칸은 기준에서 뺀다
   return `<div class="stack-trend">${P.map((p) => {
     const sum = Object.values(per[p]).reduce((s, v) => s + v, 0);
-    return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
+    return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${B.long(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
       <span class="st-v">${n(tot(p))}</span>
       <span class="st-bar" style="height:${sc.h(sum)}%">${order.filter((k) => per[p][k]).map((k) =>
         `<i style="flex:${per[p][k]};background:${color(k)}" title="${esc(label(k))} ${per[p][k]}건"></i>`).join('')}</span>
-      <span class="st-l">${shortLabel(p)}${actPeriods.has(p) ? '<b class="st-flag" aria-label="개선 조치">●</b>' : ''}</span></button>`;
+      <span class="st-l">${B.label(p)}${actPeriods.has(p) ? '<b class="st-flag" aria-label="개선 조치">●</b>' : ''}</span></button>`;
   }).join('')}</div>${axisNote(sc.floor)}`;
 }
 
@@ -657,7 +693,7 @@ function renderHome() {
     <div class="cards">
       ${card('유형 묶음 비중', `${RANGES[S.range]} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group' }), { cls: 'span-2' })}
       ${card('요일별 상담', RANGES[S.range], weekdayBars(ranged))}
-      ${card('보름별 상담', '막대 안의 회색 단계는 유형 묶음이에요', stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
+      ${card(`${UNIT_LABEL[UNIT[S.range]]}별 상담`, `${RANGES[S.range]} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
       ${card('매장 TOP 8', '상담이 많은 매장이에요. 막대는 유형 묶음 구성이에요', `<ul class="stores">${storeEntries.map(([s, v]) => {
         const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
         return `<li><button class="store-row" data-store="${esc(s)}"><span class="hbar-label">${esc(s)}</span>
@@ -690,10 +726,10 @@ function renderDetail() {
   const allRanged = S.chats.filter(inRange).length;
 
   const acts = V === 'type' ? S.actions.filter((a) => a.device_type === K).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
-  const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
+  const actPeriods = new Set(acts.map((a) => bucketOfDate(new Date(a.acted_on), UNIT[S.range])));
 
   const q = S.q.trim();
-  const listed = (S.period ? base.filter((c) => c.period === S.period) : ranged)
+  const listed = (S.period ? base.filter((c) => bucketOf(c, UNIT[S.range]) === S.period) : ranged)
     .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
       && (!q || c.store.includes(q) || (SEARCH.q === q && SEARCH.ids?.has(c.id))));
 
@@ -721,7 +757,7 @@ function renderDetail() {
     </section>
 
     <div class="cards">
-      ${card('보름별 추이', `막대를 누르면 그 보름의 상담만 아래에 보여요. 빗금은 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}`,
+      ${card(`${UNIT_LABEL[UNIT[S.range]]}별 추이`, `막대를 누르면 그 ${UNIT_LABEL[UNIT[S.range]]}의 상담만 아래에 보여요. 흐린 막대는 아직 진행 중이에요.${actPeriods.size ? ` 점은 개선 조치를 한 ${UNIT_LABEL[UNIT[S.range]]}이에요.` : ''}`,
         `${V === 'type' ? stackedTrend(base, { keyFn: () => ['x'], color: () => 'var(--ink)', label: () => title, actPeriods })
           : stackedTrend(base, { keyFn: subKey, color: subColor, label: subLabel, keys: subEntries.map(([k]) => k) })}
          ${V === 'type' ? actionsBlock(base, acts) : ''}`, { cls: 'span-3' })}
@@ -739,7 +775,7 @@ function renderDetail() {
       <div class="card-head"><div><h2>상담 ${n(listed.length)}건</h2><p class="card-sub">요약을 읽고, 자세한 대화는 채널톡에서 확인하세요</p></div></div>
       <div class="filters">
         <input type="search" id="q" value="${esc(q)}" placeholder="내용으로 찾기 (예: 탈수, 환불, 입고)" aria-label="상담 내용으로 찾기">
-        ${S.period ? `<button class="pill" data-clear="period">${periodLabel(S.period)} ✕</button>` : ''}
+        ${S.period ? `<button class="pill" data-clear="period">${buckets().long(S.period)} ✕</button>` : ''}
         ${S.store ? `<button class="pill" data-clear="store">${esc(S.store)} ✕</button>` : ''}
         ${S.type ? `<button class="pill" data-clear="type">${esc(tagLabel(S.type))} ✕</button>` : ''}
       </div>
