@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기기 오작동 문의 유형</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --accent-soft: #dbeafe; --warn-bg: #fef3c7; --warn: #92400e; --est: #7c3aed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1115; --card: #181b21; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2f37;
+      --accent: #60a5fa; --accent-soft: #1e3a5f; --warn-bg: #3b2f12; --warn: #fcd34d; --est: #a78bfa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 8px 14px; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .center { text-align: center; padding: 64px 16px; }
+  .warn { background: var(--warn-bg); color: var(--warn); padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+  .types { width: 100%; border-collapse: collapse; }
+  .types td { padding: 10px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+  .types tr { cursor: pointer; }
+  .types tr:hover td, .types tr.sel td { background: var(--accent-soft); }
+  .types .name { font-weight: 600; white-space: nowrap; }
+  .types .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; min-width: 120px; }
+  .spark i { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; opacity: .85; }
+  .trend { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 18px; overflow-x: auto; }
+  .trend .col { flex: 1 0 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .trend .bar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 1px; }
+  .trend .v { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .trend .l { font-size: 11px; color: var(--muted); white-space: nowrap; margin-top: 4px; }
+  .list { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .list th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; }
+  .list td { padding: 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  .list td.d { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; font-size: 11px; color: var(--est); border: 1px solid var(--est); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+  a { color: var(--accent); }
+  @media (max-width: 640px) {
+    .types .spark-cell { display: none; }
+    .list .store-col { display: none; }
+  }
+</style>
+</head>
+<body>
+<main id="app"><p class="center muted">불러오는 중…</p></main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://dnazztgpzfpcezsadyaz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_cuPnQYSO5_hIoNvfLovPPw_VFUnx0u4'; // 공개용 키
+const COMPANY_DOMAIN = 'lifegoeson.kr'; // 화면 안내용. 실제 차단은 DB(RLS)에서 한다.
+const CHANNEL_DESK = (channelId, chatId) => `https://desk.channel.io/#/channels/${channelId}/user_chats/${chatId}`;
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = sb.schema('run24');
+const app = document.getElementById('app');
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const kst = (iso, opts) => new Date(iso).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', ...opts });
+
+// 보름 구간: 'YYYY-MM-01' 또는 'YYYY-MM-16'
+function periodOf(date) {
+  const [y, m, d] = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' }).split('-');
+  return `${y}-${m}-${+d > 15 ? '16' : '01'}`;
+}
+function periodsFrom(start) {
+  const out = [], end = periodOf(new Date());
+  let [y, m, d] = start.split('-').map(Number);
+  for (let p = start; p <= end; ) {
+    out.push(p);
+    if (d === 1) d = 16; else { d = 1; m++; if (m > 12) { m = 1; y++; } }
+    p = `${y}-${String(m).padStart(2, '0')}-${d === 1 ? '01' : '16'}`;
+  }
+  return out;
+}
+const periodLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '1~15' : '16~말'}`;
+
+function login() {
+  app.innerHTML = `<div class="center"><h1>기기 오작동 문의 유형</h1>
+    <p class="muted">회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
+    <button class="primary" id="go">구글로 로그인</button></div>`;
+  document.getElementById('go').onclick = () => sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: location.href.split('#')[0].split('?')[0], queryParams: { hd: COMPANY_DOMAIN } },
+  });
+}
+
+function notCompany(email) {
+  app.innerHTML = `<div class="center"><h1>접근 권한이 없어요</h1>
+    <p class="muted">${esc(email)} 계정은 볼 수 없어요. 회사 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
+    <button id="out">로그아웃</button></div>`;
+  document.getElementById('out').onclick = async () => { await sb.auth.signOut(); login(); };
+}
+
+let state = { periods: [], byType: new Map(), selected: null };
+
+async function dashboard(email) {
+  const [{ data: rows, error }, { data: sync }] = await Promise.all([
+    db.from('type_half_month').select('device_type, period_start, cnt'),
+    db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
+  ]);
+  if (error) { app.innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+
+  const first = rows.reduce((a, r) => (r.period_start < a ? r.period_start : a), periodOf(new Date()));
+  state.periods = periodsFrom(first);
+  state.byType = new Map();
+  for (const r of rows) {
+    if (!state.byType.has(r.device_type)) state.byType.set(r.device_type, {});
+    state.byType.get(r.device_type)[r.period_start] = r.cnt;
+  }
+  const recent = state.periods.slice(-6); // 최근 3개월 = 보름 6구간
+  const types = [...state.byType.entries()]
+    .map(([name, m]) => ({ name, m, total: recent.reduce((s, p) => s + (m[p] || 0), 0) }))
+    .sort((a, b) => b.total - a.total);
+  const max = Math.max(1, ...types.flatMap((t) => state.periods.map((p) => t.m[p] || 0)));
+
+  app.innerHTML = `
+    <header>
+      <h1>기기 오작동 문의 유형</h1>
+      <span class="muted">${esc(email)} · 마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+        · <a href="#" id="out">로그아웃</a></span>
+    </header>
+    ${sync?.last_error ? `<div class="warn">최근 갱신에 실패했어요: ${esc(sync.last_error)}</div>` : ''}
+    <section class="card">
+      <h2>유형별 건수 <span class="muted">최근 3개월 · 보름 단위 추이 (${periodLabel(state.periods[0])}부터)</span></h2>
+      ${types.length ? `<table class="types"><tbody>${types.map((t) => `
+        <tr data-type="${esc(t.name)}">
+          <td class="name">${esc(t.name)}</td>
+          <td class="spark-cell"><div class="spark">${state.periods.map((p) =>
+            `<i style="height:${((t.m[p] || 0) / max) * 100}%" title="${periodLabel(p)}: ${t.m[p] || 0}건"></i>`).join('')}</div></td>
+          <td class="num">${t.total}건</td>
+        </tr>`).join('')}</tbody></table>` : '<p class="muted">아직 데이터가 없어요.</p>'}
+    </section>
+    <section id="detail"></section>`;
+
+  document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); login(); };
+  for (const tr of app.querySelectorAll('.types tr')) tr.onclick = () => detail(tr.dataset.type);
+}
+
+async function detail(type) {
+  state.selected = type;
+  for (const tr of app.querySelectorAll('.types tr')) tr.classList.toggle('sel', tr.dataset.type === type);
+  const el = document.getElementById('detail');
+  const m = state.byType.get(type) || {};
+  const max = Math.max(1, ...state.periods.map((p) => m[p] || 0));
+  el.innerHTML = `<div class="card"><h2>${esc(type)}</h2>
+    <div class="trend">${state.periods.map((p) => `<div class="col">
+      <span class="v">${m[p] || 0}</span><div class="bar" style="height:${((m[p] || 0) / max) * 100}%"></div>
+      <span class="l">${periodLabel(p)}</span></div>`).join('')}</div></div>
+    <div class="card"><p class="muted">불러오는 중…</p></div>`;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const { data, error } = await db.from('chat_list')
+    .select('chat_id, channel_id, opened_at, store, first_message, estimated')
+    .eq('device_type', type).order('opened_at', { ascending: false }).limit(200);
+  if (state.selected !== type) return;
+  const box = el.lastElementChild;
+  if (error) { box.innerHTML = `<div class="warn">목록을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+  const est = data.filter((r) => r.estimated).length;
+  box.innerHTML = `<h2>문의 목록 <span class="muted">최근 ${data.length}건${est ? ` · 그중 ${est}건은 메시지로 추정한 유형` : ''}</span></h2>
+    <table class="list"><thead><tr><th>날짜</th><th class="store-col">매장</th><th>고객 첫 메시지</th><th></th></tr></thead><tbody>
+    ${data.map((r) => `<tr>
+      <td class="d">${kst(r.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+      <td class="store-col">${esc(r.store)}</td>
+      <td>${esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge">추정</span>' : ''}</td>
+      <td><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡</a></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function route(session) {
+  if (!session) return login();
+  const email = session.user.email || '';
+  if (email.toLowerCase().split('@')[1] !== COMPANY_DOMAIN) return notCompany(email);
+  dashboard(email);
+}
+
+let shown = false;
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+    if (event === 'SIGNED_IN' && shown) return; // 토큰 갱신 등으로 다시 그리지 않는다
+    shown = true;
+    route(session);
+  }
+});
+</script>
+</body>
+</html>
