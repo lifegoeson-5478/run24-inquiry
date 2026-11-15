@@ -1,23 +1,32 @@
+// 런24 기기 오작동 문의 대시보드 (index.html) + 관리자 페이지 (admin.html)
 const SUPABASE_URL = 'https://dnazztgpzfpcezsadyaz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_cuPnQYSO5_hIoNvfLovPPw_VFUnx0u4'; // 공개용 키
 const COMPANY_DOMAIN = 'lifegoeson.kr'; // 화면 안내용. 실제 차단은 DB(RLS)에서 한다.
 const CHANNEL_DESK = (channelId, chatId) => `https://desk.channel.io/#/channels/${channelId}/user_chats/${chatId}`;
-const PAGE = 50;
+const PAGE = 40;
 const UNKNOWN = '세부유형 미지정';
+const NO_STORE = '매장 미지정';
+const ADMIN_PAGE = window.ADMIN_PAGE === true;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const db = sb.schema('run24');
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kst = (iso, opts) => new Date(iso).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', ...opts });
+const n = (v) => Number(v || 0).toLocaleString('ko-KR');
 
-// ── 보름 구간: 'YYYY-MM-01' 또는 'YYYY-MM-16' (한국 시간 기준)
-function periodOf(date) {
-  const [y, m, d] = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' }).split('-');
-  return `${y}-${m}-${+d > 15 ? '16' : '01'}`;
+// ── 날짜 (모두 한국 시간)
+const PARTS = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: 'numeric', hourCycle: 'h23' });
+const WD = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+const WD_LABEL = ['월', '화', '수', '목', '금', '토', '일'];
+function kparts(date) {
+  const p = Object.fromEntries(PARTS.formatToParts(date).map((x) => [x.type, x.value]));
+  return { y: p.year, m: p.month, d: +p.day, wd: WD[p.weekday], h: +p.hour };
 }
-function periodsFrom(start) {
-  const out = [], end = periodOf(new Date());
+const periodOfParts = ({ y, m, d }) => `${y}-${m}-${d > 15 ? '16' : '01'}`;
+const periodOf = (date) => periodOfParts(kparts(date));
+function periodsBetween(start, end) {
+  const out = [];
   let [y, m, d] = start.split('-').map(Number);
   for (let p = start; p <= end; ) {
     out.push(p);
@@ -26,339 +35,492 @@ function periodsFrom(start) {
   }
   return out;
 }
-const periodLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '1~15일' : '16일~말'}`;
-const shortLabel = (p) => `${+p.slice(5, 7)}/${p.endsWith('01') ? '1~15' : '16~'}`;
-
-function change(now, before) {
-  const diff = now - before;
-  if (!before && !now) return '<span class="chg same">0</span>';
-  if (diff === 0) return '<span class="chg same">변화 없음</span>';
-  // 기준 건수가 적으면 %가 과장돼 보여서(1→7건 = +600%) 10건 이상일 때만 %를 붙인다.
-  const pct = before >= 10 ? ` (${diff > 0 ? '+' : ''}${Math.round((diff / before) * 100)}%)` : '';
-  return `<span class="chg ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}${pct}</span>`;
-}
-
-// ── 화면 상태. URL 해시에 넣어서 링크로 공유할 수 있게 한다.
-const S = { periods: [], types: [], byType: new Map(), actions: [], type: null, period: null, store: null, rows: null, shown: PAGE, email: '',
-  tab: 'dash', approver: false, sugStatus: 'pending', sugShown: PAGE };
-// 일반 페이지(index.html)는 대시보드만, 관리자 페이지(admin.html)는 관리 기능만 보여준다.
-const ADMIN_PAGE = window.ADMIN_PAGE === true;
-const TABS = ADMIN_PAGE ? { admins: '관리자' } : { dash: '대시보드' };
-const DEFAULT_TAB = Object.keys(TABS)[0];
-S.tab = DEFAULT_TAB;
+const periodLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '1~15일' : '16일~말일'}`;
+const shortLabel = (p) => `${+p.slice(5, 7)}월 ${p.endsWith('01') ? '상' : '하'}`;
 const todayKst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
 
-// 가장 최근 조치를 기준으로, 조치한 보름을 빼고 그 전 3구간과 그 후(진행 중인 보름 제외) 최대 3구간의 평균을 비교한다.
-function beforeAfter(m, actedOn) {
-  const P = S.periods, cur = P.at(-1), ap = periodOf(new Date(actedOn)), i = P.indexOf(ap);
-  if (i < 0) return null;
-  const avg = (ps) => ps.length ? ps.reduce((s, p) => s + (m[p] || 0), 0) / ps.length : null;
-  const before = P.slice(Math.max(0, i - 3), i), after = P.slice(i + 1).filter((p) => p !== cur).slice(0, 3);
-  return { before: avg(before), after: avg(after), nBefore: before.length, nAfter: after.length };
-}
+// ── 요약 문장에서 증상·처리 방식 뽑기
+// ponytail: 단순 키워드 규칙. 잘 안 맞는 표현이 보이면 여기에 추가한다.
+const SYMPTOMS = [
+  ['결제 후 작동 안 함', /결제.{0,12}(미작동|작동\s?안|작동하지|안\s?돌|시작\s?안)|미작동/],
+  ['도중에 멈춤', /멈|중단|정지/],
+  ['문이 안 열림·안 닫힘', /문.{0,6}(안\s?열|열리지|잠|안\s?닫|닫히지)/],
+  ['돈·카드를 먹음', /(동전|지폐|돈|코인|카드).{0,8}(먹|투입.{0,4}(안|오류)|인식\s?(안|불가|오류))/],
+  ['건조가 덜 됨', /건조.{0,6}(덜|안\s?됨|불량|미흡)|덜\s?마|젖/],
+  ['탈수·배수·급수 문제', /탈수|배수|급수|물이/],
+  ['세제·유연제 문제', /세제|유연제|거품/],
+  ['화면·키오스크 오류', /(화면|키오스크|터치).{0,10}(오류|멈|먹통|안\s?됨|반응|꺼|안\s?나)/],
+  ['접수증·영수증 안 나옴', /(접수증|영수증).{0,6}(미출력|안\s?나|출력\s?안|나오지)/],
+  ['소음·냄새·오염', /소음|냄새|악취|오염|얼룩|녹/],
+];
+const RESOLUTIONS = [
+  ['환불·결제 취소', /환불|결제\s?취소|취소\s?처리|입금/],
+  ['포인트·쿠폰 보상', /포인트|쿠폰|적립/],
+  ['원격 조치', /원격|재부팅|재시작|리셋|초기화|코인\s?투입/],
+  ['현장 점검·수리', /방문|기사|수리|점검|AS|교체/],
+  ['안내로 마무리', /./], // 위 처리가 하나도 없으면 여기로
+];
+const textOf = (c) => c.summary || c.first_message || '';
+// 증상은 한 문의에 여러 개를 셀 수 있다.
+const tally = (rules, chats) => rules.map(([label, re]) => [label, chats.filter((c) => re.test(textOf(c))).length])
+  .filter(([, v]) => v).sort((a, b) => b[1] - a[1]);
+// 처리 방식은 문의 하나당 먼저 맞는 하나만 센다 (요약 문장 대부분이 '~안내함'으로 끝나서).
+const tallyFirst = (rules, chats) => Object.entries(countBy(chats.filter((c) => textOf(c)), (c) => rules.find(([, re]) => re.test(textOf(c)))[0]));
+
+// ── 상태. 보는 화면과 필터는 URL 해시에 넣어 링크로 공유할 수 있게 한다.
+const S = {
+  email: '', approver: false, chats: [], actions: [], sync: null, periods: [], typeColor: {},
+  view: 'home', key: '', range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
+};
+const RANGES = { 30: '최근 1개월', 90: '최근 3개월', all: '전체 기간' };
+
 function readHash() {
   let hash = location.hash;
-  try { if (!/type=|tab=/.test(hash)) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
+  try { if (!/v=/.test(hash)) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
   const h = new URLSearchParams(hash.slice(1));
-  S.type = h.get('type'); S.period = h.get('period'); S.store = h.get('store');
-  S.tab = TABS[h.get('tab')] ? h.get('tab') : DEFAULT_TAB;
+  S.view = ['type', 'store', 'all'].includes(h.get('v')) ? h.get('v') : 'home';
+  S.key = h.get('k') || '';
+  S.range = RANGES[h.get('r')] ? h.get('r') : '90';
+  S.period = h.get('p') || ''; S.store = h.get('s') || ''; S.type = h.get('t') || ''; S.q = h.get('q') || '';
 }
 function writeHash() {
   const h = new URLSearchParams();
-  if (S.tab !== DEFAULT_TAB) h.set('tab', S.tab);
-  else if (S.type) h.set('type', S.type);
-  if (S.tab === 'dash' && S.period) h.set('period', S.period);
-  if (S.tab === 'dash' && S.store) h.set('store', S.store);
+  if (S.view !== 'home') h.set('v', S.view);
+  if (S.key) h.set('k', S.key);
+  if (S.range !== '90') h.set('r', S.range);
+  if (S.period) h.set('p', S.period);
+  if (S.store) h.set('s', S.store);
+  if (S.type) h.set('t', S.type);
+  if (S.q) h.set('q', S.q);
   history.replaceState(null, '', h.toString() ? '#' + h : location.pathname);
 }
 
+// ── 로그인
 function login() {
-  app.innerHTML = `<div class="center"><h1>기기 오작동 문의 유형</h1>
-    <p class="muted">회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
+  app.innerHTML = `<div class="gate"><h1>런24 기기 오작동 문의</h1>
+    <p>회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
     <button class="btn primary" id="go">구글로 로그인</button></div>`;
-  // 공유받은 링크(#type=…)로 들어왔다면 로그인 후 같은 화면으로 돌아오도록 기억해 둔다.
-  try { if (/type=|tab=/.test(location.hash)) sessionStorage.setItem('run24-hash', location.hash); } catch {}
+  try { if (/v=/.test(location.hash)) sessionStorage.setItem('run24-hash', location.hash); } catch {}
   document.getElementById('go').onclick = () => sb.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: location.origin + location.pathname, queryParams: { hd: COMPANY_DOMAIN } },
+    provider: 'google', options: { redirectTo: location.origin + location.pathname, queryParams: { hd: COMPANY_DOMAIN } },
   });
 }
-
 function notCompany(email) {
-  app.innerHTML = `<div class="center"><h1>접근 권한이 없어요</h1>
-    <p class="muted">${esc(email)} 계정은 볼 수 없어요. 회사 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
+  app.innerHTML = `<div class="gate"><h1>볼 수 없는 계정이에요</h1>
+    <p>${esc(email)} 계정은 볼 수 없어요. 회사 계정(@${COMPANY_DOMAIN})으로 다시 로그인해 주세요.</p>
     <button class="btn" id="out">로그아웃</button></div>`;
   document.getElementById('out').onclick = async () => { await sb.auth.signOut(); login(); };
 }
 
-async function dashboard(email) {
-  S.email = email;
-  const [{ data: rows, error }, { data: sync }, { data: actions }] = await Promise.all([
-    db.from('type_half_month').select('device_type, period_start, cnt'),
-    db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
-    db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on'),
-  ]);
-  S.actions = actions || [];
-  if (error) { document.getElementById('view').innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
-
-  const first = rows.reduce((a, r) => (r.period_start < a ? r.period_start : a), periodOf(new Date()));
-  S.periods = periodsFrom(first);
-  // ponytail: 수집 시작 보름은 일부 날짜만 들어 있어 낮게 보인다. 다음 보름의 30% 미만이면 추이에서 뺀다.
-  const tot = (p) => rows.reduce((s, r) => s + (r.period_start === p ? r.cnt : 0), 0);
-  if (S.periods.length > 2 && tot(S.periods[0]) < tot(S.periods[1]) * 0.3) S.periods = S.periods.slice(1);
-  S.byType = new Map();
-  for (const r of rows) {
-    if (!S.byType.has(r.device_type)) S.byType.set(r.device_type, {});
-    S.byType.get(r.device_type)[r.period_start] = r.cnt;
-  }
-  const P = S.periods, cur = P.at(-1), last = P.at(-2), prev = P.at(-3), recent = P.slice(-6);
-  const sum = (m, ps) => ps.reduce((s, p) => s + (m[p] || 0), 0);
-  S.types = [...S.byType.entries()]
-    .map(([name, m]) => ({ name, m, total: sum(m, recent), last: m[last] || 0, prev: m[prev] || 0 }))
-    .sort((a, b) => (a.name === UNKNOWN) - (b.name === UNKNOWN) || b.total - a.total); // 미지정은 맨 아래
-  const all = Object.fromEntries(P.map((p) => [p, S.types.reduce((s, t) => s + (t.m[p] || 0), 0)]));
-  const grand = sum(all, recent);
-
-  document.getElementById('view').innerHTML = `
-    <p class="muted syncline">마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'} (매일 새벽 4시)</p>
-    ${sync?.last_error ? `<div class="warn">최근 갱신에 실패했어요. 숫자가 최신이 아닐 수 있어요. (${esc(sync.last_error)})</div>` : ''}
-    <section class="kpis">
-      <div class="card kpi"><div class="k">최근 3개월 오작동 문의</div><div class="v num">${grand.toLocaleString()}건</div></div>
-      <div class="card kpi"><div class="k">지난 보름 (${periodLabel(last ?? cur)})</div>
-        <div class="v num">${(all[last] || 0).toLocaleString()}건 ${last && prev ? change(all[last] || 0, all[prev] || 0) : ''}</div></div>
-      <div class="card kpi"><div class="k">이번 보름 (${periodLabel(cur)}, 진행 중)</div><div class="v num">${(all[cur] || 0).toLocaleString()}건</div></div>
-    </section>
-    <div class="layout" id="layout">
-      <nav class="card side" aria-label="유형 목록">
-        <div class="hint muted">최근 3개월 많은 순 · 증감은 지난 보름과 그 전 보름 비교</div>
-        ${S.types.map((t) => {
-          const max = Math.max(1, ...P.map((p) => t.m[p] || 0)); // 유형마다 자기 최대값 기준
-          return `${t.name === UNKNOWN ? '<div class="muted unk-sep">태그에 세부유형이 없고 내용으로도 알 수 없는 문의</div>' : ''}
-          <button class="type ${t.name === UNKNOWN ? 'unk' : ''}" data-type="${esc(t.name)}">
-            <span class="name">${esc(t.name)}</span>
-            <span class="spark" aria-hidden="true">${P.slice(-12).map((p) =>
-              `<i class="${p === cur ? 'cur' : ''}" style="height:${((t.m[p] || 0) / max) * 100}%"></i>`).join('')}</span>
-            <span class="total num">${t.total}건</span>
-            <span class="meta">${grand ? Math.round((t.total / grand) * 100) : 0}% · ${last && prev ? change(t.last, t.prev) : ''}</span>
-          </button>`;
-        }).join('')}
-      </nav>
-      <section class="detail" id="detail"></section>
-    </div>`;
-
-  for (const b of app.querySelectorAll('.type')) b.onclick = () => pick(b.dataset.type, true);
-  pick(S.byType.has(S.type) ? S.type : S.types[0]?.name, false, true);
-}
-
-async function pick(type, userClick, keepFilters) {
-  if (!type) return;
-  if (!keepFilters) { S.period = null; S.store = null; S.q = ''; S.allStores = false; S.actOpen = false; }
-  S.type = type; S.rows = null; S.shown = PAGE;
-  writeHash();
-  for (const b of app.querySelectorAll('.type')) b.setAttribute('aria-current', String(b.dataset.type === type));
-  const layout = document.getElementById('layout');
-  if (userClick) layout.classList.add('picked');
-  renderDetail();
-  if (userClick && innerWidth <= 900) scrollTo({ top: layout.offsetTop - 8 });
-
-  // 이 유형의 문의를 모두 가져와서 매장·기간 필터는 화면에서 처리한다 (유형당 수백 건 수준).
-  const rows = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from('chat_list')
-      .select('chat_id, channel_id, opened_at, store, first_message, estimated, summary')
-      .eq('device_type', type).order('opened_at', { ascending: false }).range(from, from + 999);
-    if (S.type !== type) return;
-    if (error) { S.rows = { error: error.message }; return renderDetail(); }
-    rows.push(...data);
-    if (data.length < 1000) break;
-  }
-  for (const r of rows) r.period = periodOf(new Date(r.opened_at));
-  S.rows = rows;
-  renderDetail();
-}
-
-function renderDetail() {
-  const el = document.getElementById('detail');
-  const t = S.types.find((x) => x.name === S.type);
-  if (!t) { el.innerHTML = ''; return; }
-  const P = S.periods, cur = P.at(-1);
-  const max = Math.max(1, ...P.map((p) => t.m[p] || 0));
-  const loaded = Array.isArray(S.rows);
-
-  // 개선 조치: 추이에 표시하고, 가장 최근 조치 기준으로 전후 평균을 비교한다.
-  const acts = S.actions.filter((a) => a.device_type === t.name).sort((a, b) => (a.acted_on < b.acted_on ? -1 : a.acted_on > b.acted_on ? 1 : 0));
-  const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
-  const latest = acts.at(-1);
-  let compare = '';
-  if (latest) {
-    const ba = beforeAfter(t.m, latest.acted_on);
-    const fmt = (v) => (v === null ? '-' : `${Math.round(v * 10) / 10}건`);
-    if (!ba) compare = '<p class="muted">조치일이 데이터 기간 밖이라 비교할 수 없어요.</p>';
-    else if (!ba.nAfter) compare = `<p class="muted">${esc(latest.acted_on)} 조치 이후 끝난 보름이 아직 없어요. 다음 보름이 끝나면 비교가 보여요.</p>`;
-    else {
-      const d = ba.before ? Math.round(((ba.after - ba.before) / ba.before) * 100) : null;
-      compare = `<p class="compare">최근 조치(${esc(latest.acted_on)}) 전 보름 평균 <b class="num">${fmt(ba.before)}</b> → 이후 <b class="num">${fmt(ba.after)}</b>
-        ${d === null ? '' : `<span class="chg ${d < 0 ? 'down' : d > 0 ? 'up' : 'same'}">${d > 0 ? '+' : ''}${d}%</span>`}
-        <span class="muted">(전 ${ba.nBefore}구간, 후 ${ba.nAfter}구간 · 조치한 보름은 제외)</span></p>`;
-    }
-  }
-  const actionsHtml = !acts.length && !S.actOpen
-    ? `<div class="act-empty"><button class="link strong" id="act-open">+ 개선 조치 기록하기</button>
-       <span class="muted">조치한 날을 남기면 추이에 표시되고 조치 전후를 비교해 줘요.</span></div>`
-    : `
-    ${compare}
-    ${acts.length ? `<ul class="acts">${acts.slice().reverse().map((a) => `<li>
-      <span class="num">${esc(a.acted_on)}</span> <span>${esc(a.note) || '<span class="muted">(메모 없음)</span>'}</span>
-      <span class="muted">${esc(a.created_by.split('@')[0])}</span>
-      ${a.created_by === S.email ? `<button class="link" data-del="${a.id}" aria-label="조치 기록 삭제">삭제</button>` : ''}</li>`).join('')}</ul>`
-      : '<p class="muted">아직 기록이 없어요. 이 유형에 개선 조치를 했다면 날짜를 남겨 주세요. 추이 그래프에 표시돼요.</p>'}
-    <form class="act-form" id="act-form">
-      <input type="date" name="d" value="${todayKst()}" max="${todayKst()}" required aria-label="조치일">
-      <input type="text" name="n" maxlength="200" placeholder="무엇을 했나요? (예: 건조기 필터 전 매장 교체)" aria-label="조치 내용">
-      <button class="btn primary" type="submit">기록</button>
-    </form>`;
-
-  // 매장별 건수: 선택한 기간이 있으면 그 기간 기준
-  let storeChips = '<p class="muted">불러오는 중…</p>';
-  if (loaded) {
-    const counts = {};
-    for (const r of S.rows) if (!S.period || r.period === S.period) counts[r.store] = (counts[r.store] || 0) + 1;
-    const NO_STORE = '매장 미지정';
-    const top = Object.entries(counts).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
-    const shownStores = S.allStores ? top : top.slice(0, 15);
-    if (S.store && !shownStores.some(([s]) => s === S.store)) shownStores.push(top.find(([s]) => s === S.store) || [S.store, 0]);
-    storeChips = top.length ? `<div class="chips">${shownStores.map(([s, n]) =>
-      `<button class="chip ${S.store === s ? 'on' : ''} ${s === NO_STORE ? 'dim' : ''}" data-store="${esc(s)}">${esc(s)}<b class="num">${n}</b></button>`).join('')}
-      ${top.length > 15 ? `<button class="link" id="all-stores">${S.allStores ? '접기' : `모두 보기 (${top.length}곳)`}</button>` : ''}</div>` : '<p class="muted">없음</p>';
-  }
-
-  let listHtml = '<p class="muted">불러오는 중…</p>';
-  if (S.rows?.error) listHtml = `<div class="warn">목록을 불러오지 못했어요: ${esc(S.rows.error)}</div>`;
-  else if (loaded) {
-    const q = (S.q || '').trim();
-    const rows = S.rows.filter((r) => (!S.period || r.period === S.period) && (!S.store || r.store === S.store)
-      && (!q || `${r.summary || ''} ${r.first_message || ''} ${r.store}`.includes(q)));
-    const est = rows.filter((r) => r.estimated).length;
-    listHtml = `
-      <div class="filters">
-        <input type="search" id="listq" class="search" value="${esc(q)}" placeholder="내용 검색 (예: 탈수, 문 안 열림)" aria-label="문의 내용 검색">
-        <span class="muted">${rows.length.toLocaleString()}건${est ? ` · 그중 ${est}건은 메시지로 추정한 유형` : ''}</span>
-        ${S.period ? `<span class="filter">${periodLabel(S.period)}<button data-clear="period" aria-label="기간 필터 해제">✕</button></span>` : ''}
-        ${S.store ? `<span class="filter">${esc(S.store)}<button data-clear="store" aria-label="매장 필터 해제">✕</button></span>` : ''}
-      </div>
-      ${rows.length ? `<table class="list"><thead><tr><th>날짜</th><th class="s">매장</th><th>상담 내용</th><th></th></tr></thead><tbody>
-      ${rows.slice(0, S.shown).map((r) => `<tr>
-        <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${kst(r.opened_at, { hour: '2-digit', minute: '2-digit' })}</span></td>
-        <td class="s">${esc(r.store)}</td>
-        <td class="m"><span class="store">${esc(r.store)}</span>${r.summary
-          ? `<span class="sum">${esc(r.summary)}</span>`
-          : esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge" title="태그에 세부유형이 없어 메시지 내용으로 추정했어요">추정</span>' : ''}</td>
-        <td class="go"><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a></td>
-      </tr>`).join('')}</tbody></table>
-      ${rows.length > S.shown ? `<button class="btn more" id="more">더 보기 (${(rows.length - S.shown).toLocaleString()}건 남음)</button>` : ''}`
-      : '<p class="muted">조건에 맞는 문의가 없어요.</p>'}`;
-  }
-
-  el.innerHTML = `
-    <div class="card">
-      <div class="detail-head">
-        <button class="btn back" id="back">← 유형 목록</button>
-        <h2>${esc(t.name)}</h2>
-        <span class="muted">최근 3개월 ${t.total}건 · 지난 보름 ${t.last}건 ${change(t.last, t.prev)}</span>
-      </div>
-      <p class="muted" style="margin:6px 0 0">막대를 누르면 그 기간 문의만 볼 수 있어요. 연한 막대는 아직 진행 중인 보름이에요.</p>
-      <div class="trend">${P.map((p) => `<button class="${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''} ${actPeriods.has(p) ? 'act' : ''}" data-period="${p}" title="${periodLabel(p)}: ${t.m[p] || 0}건${actPeriods.has(p) ? ' · 개선 조치' : ''}">
-        ${actPeriods.has(p) ? '<span class="flag">조치</span>' : ''}<span class="v num">${t.m[p] || 0}</span><span class="bar" style="height:${((t.m[p] || 0) / max) * 100}%"></span>
-        <span class="l">${shortLabel(p)}</span></button>`).join('')}</div>
-    </div>
-    <div class="card"><h3>개선 조치</h3>${actionsHtml}</div>
-    <div class="card"><h3>매장별 ${S.period ? `(${periodLabel(S.period)})` : '(전체 기간)'}</h3>${storeChips}</div>
-    <div class="card"><h3>문의 목록</h3>${listHtml}</div>`;
-
-  el.querySelector('#back').onclick = () => { document.getElementById('layout').classList.remove('picked'); scrollTo({ top: 0 }); };
-  for (const b of el.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? null : b.dataset.period; S.shown = PAGE; writeHash(); renderDetail(); };
-  for (const b of el.querySelectorAll('[data-store]')) b.onclick = () => { S.store = S.store === b.dataset.store ? null : b.dataset.store; S.shown = PAGE; writeHash(); renderDetail(); };
-  for (const b of el.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = null; S.shown = PAGE; writeHash(); renderDetail(); };
-  el.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; renderDetail(); });
-  el.querySelector('#all-stores')?.addEventListener('click', () => { S.allStores = !S.allStores; renderDetail(); });
-  el.querySelector('#act-open')?.addEventListener('click', () => { S.actOpen = true; renderDetail(); el.querySelector('#act-form input[name=n]')?.focus(); });
-  const listq = el.querySelector('#listq');
-  if (listq) {
-    let timer;
-    listq.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { S.q = listq.value; S.shown = PAGE; S.qFocus = true; renderDetail(); }, 250); };
-    if (S.qFocus) { S.qFocus = false; listq.focus(); listq.setSelectionRange(listq.value.length, listq.value.length); }
-  }
-  el.querySelector('#act-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = e.target, btn = f.querySelector('button');
-    btn.disabled = true;
-    const { error } = await db.from('actions').insert({ device_type: t.name, acted_on: f.d.value, note: f.n.value.trim() });
-    if (error) { btn.disabled = false; alert('기록하지 못했어요: ' + error.message); return; }
-    await reloadActions();
-  });
-  for (const b of el.querySelectorAll('[data-del]')) b.onclick = async () => {
-    if (!confirm('이 조치 기록을 삭제할까요?')) return;
-    const { error } = await db.from('actions').delete().eq('id', Number(b.dataset.del));
-    if (error) { alert('삭제하지 못했어요: ' + error.message); return; }
-    await reloadActions();
-  };
-  const trend = el.querySelector('.trend'); trend.scrollLeft = trend.scrollWidth; // 최근 구간이 보이게
-}
-
-// ── 공통 머리말 + 탭
 async function shell(email) {
   S.email = email;
   readHash();
   const { data: ok } = await db.rpc('is_approver');
   S.approver = ok === true;
   if (ADMIN_PAGE && !S.approver) {
-    app.innerHTML = `<div class="center"><h1>관리자만 들어올 수 있어요</h1>
-      <p class="muted">${esc(email)} 계정은 관리자로 등록되어 있지 않아요. 관리자에게 등록을 요청해 주세요.</p>
+    app.innerHTML = `<div class="gate"><h1>관리자만 들어올 수 있어요</h1>
+      <p>${esc(email)} 계정은 관리자로 등록되어 있지 않아요. 관리자에게 등록을 요청해 주세요.</p>
       <a class="btn" href="./">대시보드로 가기</a></div>`;
     return;
   }
-  const otherPage = ADMIN_PAGE ? '<a href="./">← 대시보드</a>' : S.approver ? '<a href="admin.html">관리자 페이지 →</a>' : '';
   app.innerHTML = `
-    <header>
-      <h1>${ADMIN_PAGE ? '관리자' : '기기 오작동 문의 유형'}</h1>
-      <span class="muted">${otherPage ? otherPage + ' · ' : ''}${esc(email)} · <a href="#" id="out">로그아웃</a></span>
+    <header class="top">
+      <a class="brand" href="${ADMIN_PAGE ? './' : '#'}" id="home">런24 기기 오작동 문의</a>
+      <div class="top-right">
+        ${ADMIN_PAGE ? '<a href="./">대시보드</a>' : S.approver ? '<a href="admin.html">관리자</a>' : ''}
+        <span class="who">${esc(email.split('@')[0])}</span>
+        <a href="#" id="out">로그아웃</a>
+      </div>
     </header>
-    ${Object.keys(TABS).length > 1 ? `<nav class="tabs" role="tablist">${Object.entries(TABS).map(([k, v]) =>
-      `<button role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${v}<span class="cnt" id="cnt-${k}"></span></button>`).join('')}</nav>` : ''}
-    <div id="view"></div>`;
+    <main id="view" class="view"><p class="loading">불러오는 중…</p></main>`;
   document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
-  for (const b of app.querySelectorAll('[data-tab]')) b.onclick = () => showTab(b.dataset.tab);
-  showTab(S.tab);
+  if (ADMIN_PAGE) return admins();
+  document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
+  await loadData();
+  render();
 }
 
-function showTab(tab) {
-  S.tab = tab;
-  for (const b of app.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+// ── 데이터: 오작동 문의 전체를 한 번에 불러와 화면에서 집계한다 (수천 건 수준).
+async function loadData() {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('chat_list')
+      .select('chat_id, channel_id, opened_at, store, first_message, estimated, summary, device_type')
+      .order('opened_at', { ascending: false }).range(from, from + 999);
+    if (error) { document.getElementById('view').innerHTML = `<p class="warn">데이터를 불러오지 못했어요. 새로고침해 주세요. (${esc(error.message)})</p>`; throw error; }
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  const [{ data: sync }, { data: actions }] = await Promise.all([
+    db.from('sync_state').select('last_synced_at, last_error').maybeSingle(),
+    db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on'),
+  ]);
+  S.sync = sync; S.actions = actions || [];
+
+  const byId = new Map();
+  for (const r of rows) {
+    let c = byId.get(r.chat_id);
+    if (!c) {
+      const p = kparts(new Date(r.opened_at));
+      c = { id: r.chat_id, channel_id: r.channel_id, opened_at: r.opened_at, ms: Date.parse(r.opened_at), store: r.store || NO_STORE,
+        summary: r.summary, first_message: r.first_message, types: [], estimated: false, period: periodOfParts(p), wd: p.wd, h: p.h };
+      byId.set(r.chat_id, c);
+    }
+    c.types.push(r.device_type);
+    if (r.estimated) c.estimated = true;
+  }
+  S.chats = [...byId.values()].sort((a, b) => b.ms - a.ms);
+
+  // 보름 구간: 수집 시작 보름은 일부 날짜만 있어 낮게 보이므로, 다음 보름의 30% 미만이면 뺀다.
+  const now = periodOf(new Date());
+  const first = S.chats.reduce((a, c) => (c.period < a ? c.period : a), now);
+  let P = periodsBetween(first, now);
+  const cnt = (p) => S.chats.filter((c) => c.period === p).length;
+  if (P.length > 2 && cnt(P[0]) < cnt(P[1]) * 0.3) P = P.slice(1);
+  S.periods = P;
+
+  // 유형 색: 많은 순으로 6개까지 고유색, 나머지는 회색
+  const typeTotals = countBy(S.chats, (c) => c.types);
+  const PALETTE = ['#0E8C83', '#3A6EA5', '#B7791F', '#8E5A9B', '#5E8B4F', '#B5655A'];
+  Object.keys(typeTotals).filter((t) => t !== UNKNOWN).slice(0, 6).forEach((t, i) => (S.typeColor[t] = PALETTE[i]));
+}
+
+function countBy(list, keyFn) {
+  const m = {};
+  for (const x of list) for (const k of [].concat(keyFn(x))) m[k] = (m[k] || 0) + 1;
+  return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]));
+}
+const colorOf = (t) => S.typeColor[t] || '#A3B0B8';
+const inRange = (c) => S.range === 'all' || c.ms >= Date.now() - Number(S.range) * 86_400_000;
+
+// 지난 보름(완료)과 그 전 보름 비교. 증감은 문장으로 쓴다.
+function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
+function changeWords(now, before) {
+  const d = now - before;
+  if (!now && !before) return '<span class="chg flat">문의 없음</span>';
+  if (d === 0) return '<span class="chg flat">그 전 보름과 같아요</span>';
+  return `<span class="chg ${d > 0 ? 'up' : 'down'}">그 전 보름보다 ${n(Math.abs(d))}건 ${d > 0 ? '늘었어요' : '줄었어요'}</span>`;
+}
+
+function go(view, key = '') {
+  Object.assign(S, { view, key, period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false });
+  render(); scrollTo({ top: 0 });
+}
+
+function render() {
   writeHash();
-  document.getElementById('view').innerHTML = '<p class="center muted">불러오는 중…</p>';
-  ({ dash: () => dashboard(S.email), admins })[tab]();
+  if (S.view === 'home') renderHome(); else renderDetail();
 }
 
-// ── 관리자 탭 (관리자 추가·삭제)
+// ── 공통 조각
+const rangeSelect = () => `<label class="range">기간 <select id="range">${Object.entries(RANGES).map(([k, v]) =>
+  `<option value="${k}" ${S.range === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+
+function bars(entries, { max, onKey, color, unit = '건', dim } = {}) {
+  const top = max ?? Math.max(1, ...entries.map(([, v]) => v));
+  return `<ul class="bars">${entries.map(([k, v]) => `<li>
+    ${onKey ? `<button class="bar-row" data-${onKey}="${esc(k)}">` : '<div class="bar-row">'}
+      <span class="bar-label ${dim && dim(k) ? 'dim' : ''}">${esc(k)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${(v / top) * 100}%;background:${color ? color(k) : 'var(--mint)'}"></span></span>
+      <span class="bar-val">${n(v)}${unit}</span>
+    ${onKey ? '</button>' : '</div>'}</li>`).join('')}</ul>`;
+}
+
+function heatmap(chats) {
+  const grid = Array.from({ length: 7 }, () => Array(12).fill(0));
+  for (const c of chats) grid[c.wd][Math.floor(c.h / 2)]++;
+  const max = Math.max(1, ...grid.flat());
+  let best = [0, 0, 0];
+  grid.forEach((row, d) => row.forEach((v, h) => { if (v > best[0]) best = [v, d, h]; }));
+  const hourLabels = Array.from({ length: 12 }, (_, i) => (i % 3 === 0 ? `${i * 2}시` : ''));
+  return `<div class="heat" role="img" aria-label="요일과 시간대별 문의 수. 가장 많은 때는 ${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시">
+    <div class="heat-grid">
+      <span></span>${hourLabels.map((l) => `<span class="heat-h">${l}</span>`).join('')}
+      ${grid.map((row, d) => `<span class="heat-d">${WD_LABEL[d]}</span>${row.map((v, h) =>
+        `<span class="tile" style="--a:${v / max}" title="${WD_LABEL[d]}요일 ${h * 2}~${h * 2 + 2}시: ${v}건"></span>`).join('')}`).join('')}
+    </div>
+    ${best[0] ? `<p class="note">가장 많은 때는 <b>${WD_LABEL[best[1]]}요일 ${best[2] * 2}~${best[2] * 2 + 2}시</b>예요 (${n(best[0])}건).</p>` : ''}
+  </div>`;
+}
+
+function trend(chats, { actPeriods = new Set(), clickable = true } = {}) {
+  const P = S.periods, cur = P.at(-1);
+  const m = countBy(chats, (c) => c.period);
+  const max = Math.max(1, ...P.map((p) => m[p] || 0));
+  return `<div class="trend" role="list">${P.map((p) => `<${clickable ? 'button' : 'div'} role="listitem" class="t-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" ${clickable ? `data-period="${p}"` : ''}
+      title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${m[p] || 0}건${actPeriods.has(p) ? ' · 개선 조치' : ''}">
+      <span class="t-v">${m[p] || 0}</span>
+      <span class="t-bar" style="height:${((m[p] || 0) / max) * 100}%"></span>
+      <span class="t-l">${shortLabel(p)}${actPeriods.has(p) ? '<i class="t-flag" aria-label="개선 조치">●</i>' : ''}</span>
+    </${clickable ? 'button' : 'div'}>`).join('')}</div>`;
+}
+
+function chatRow(c, { showType = true } = {}) {
+  return `<li class="chat">
+    <div class="chat-meta"><span>${kst(c.opened_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+      <button class="linkish" data-store="${esc(c.store)}">${esc(c.store)}</button></div>
+    <p class="chat-text">${esc(c.summary || c.first_message) || '<span class="muted">(고객이 남긴 내용 없음)</span>'}</p>
+    <div class="chat-foot">
+      ${showType ? c.types.map((t) => `<button class="tag" data-type="${esc(t)}" style="--c:${colorOf(t)}">${esc(t)}</button>`).join('') : ''}
+      ${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정 유형</span>' : ''}
+      <a class="open" href="${CHANNEL_DESK(encodeURIComponent(c.channel_id), encodeURIComponent(c.id))}" target="_blank" rel="noopener">채널톡에서 보기</a>
+    </div></li>`;
+}
+
+function bindCommon(root) {
+  root.querySelector('#range')?.addEventListener('change', (e) => { S.range = e.target.value; S.shown = PAGE; render(); });
+  for (const b of root.querySelectorAll('[data-type]')) b.onclick = () => go('type', b.dataset.type);
+  for (const b of root.querySelectorAll('[data-store]')) b.onclick = () => go('store', b.dataset.store);
+}
+
+// ── 첫 화면
+function renderHome() {
+  const view = document.getElementById('view');
+  const { cur, last, prev } = halves();
+  const all = S.chats, ranged = all.filter(inRange);
+  const byP = (p, list = all) => list.filter((c) => c.period === p);
+  const curN = byP(cur).length, lastN = byP(last).length, prevN = byP(prev).length;
+
+  // 이번 보름 진행 속도: 지난 날짜 수 대비
+  const today = kparts(new Date());
+  const startDay = cur.endsWith('01') ? 1 : 16;
+  const lenDays = cur.endsWith('01') ? 15 : new Date(+today.y, +today.m, 0).getDate() - 15;
+  const elapsed = today.d - startDay + 1;
+  const projected = Math.round((curN / elapsed) * lenDays);
+
+  const typeChange = Object.keys(countBy(all, (c) => c.types)).filter((t) => t !== UNKNOWN)
+    .map((t) => [t, byP(last).filter((c) => c.types.includes(t)).length - byP(prev).filter((c) => c.types.includes(t)).length])
+    .sort((a, b) => b[1] - a[1]);
+  const rose = typeChange[0], fell = typeChange.at(-1);
+  const storeTotals = countBy(ranged.filter((c) => c.store !== NO_STORE), (c) => c.store);
+  const [topStore, topStoreN] = Object.entries(storeTotals)[0] || [];
+  const topStoreType = topStore ? Object.entries(countBy(ranged.filter((c) => c.store === topStore), (c) => c.types))[0] : null;
+
+  const typeTotals = countBy(ranged, (c) => c.types);
+  const typeEntries = Object.entries(typeTotals).sort((a, b) => (a[0] === UNKNOWN) - (b[0] === UNKNOWN) || b[1] - a[1]);
+  const storeEntries = Object.entries(storeTotals).slice(0, 10);
+  const symptoms = tally(SYMPTOMS, ranged).slice(0, 6);
+  const resolutions = tallyFirst(RESOLUTIONS, ranged);
+
+  view.innerHTML = `
+    <section class="brief">
+      <p class="brief-when">${periodLabel(cur)} · ${elapsed}일째</p>
+      <h1 class="brief-head">이번 보름 오작동 문의는 지금까지 <b>${n(curN)}건</b>이에요.
+        ${!lastN ? '' : elapsed >= lenDays
+          ? `지난 보름(${n(lastN)}건)보다 ${curN === lastN ? '같아요' : `${n(Math.abs(curN - lastN))}건 ${curN > lastN ? '많아요' : '적어요'}`}.`
+          : elapsed >= 3 ? `이 속도면 ${n(projected)}건쯤으로, 지난 보름(${n(lastN)}건)보다 ${projected > lastN ? '많을' : projected < lastN ? '적을' : '비슷할'} 것 같아요.` : ''}</h1>
+      <ul class="brief-points">
+        ${rose && rose[1] > 0 ? `<li>지난 보름 가장 많이 늘어난 건 <button class="linkish strong" data-type="${esc(rose[0])}">${esc(rose[0])}</button>예요. 그 전 보름보다 ${n(rose[1])}건 늘었어요.</li>` : ''}
+        ${fell && fell[1] < 0 ? `<li>가장 많이 줄어든 건 <button class="linkish strong" data-type="${esc(fell[0])}">${esc(fell[0])}</button>예요. ${n(-fell[1])}건 줄었어요.</li>` : ''}
+        ${topStore ? `<li>${RANGES[S.range]} 문의가 가장 많은 매장은 <button class="linkish strong" data-store="${esc(topStore)}">${esc(topStore)}</button>이에요. ${n(topStoreN)}건 중 ${esc(topStoreType?.[0] ?? '')}가 ${n(topStoreType?.[1])}건이에요.</li>` : ''}
+      </ul>
+      ${S.sync?.last_error ? `<p class="warn">최근 갱신에 실패해서 숫자가 최신이 아닐 수 있어요. (${esc(S.sync.last_error)})</p>` : ''}
+    </section>
+
+    <div class="toolbar">${rangeSelect()}<span class="muted">${n(ranged.length)}건 · 마지막 갱신 ${S.sync?.last_synced_at ? kst(S.sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'} (매일 새벽 4시)</span></div>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>어떤 기기 문의가 많나요</h2>
+        <p class="sub">유형을 누르면 추이, 매장, 증상을 자세히 볼 수 있어요.</p>
+        ${bars(typeEntries, { onKey: 'type', color: colorOf, dim: (k) => k === UNKNOWN })}
+      </section>
+      <section class="panel">
+        <h2>어느 매장에서 많이 생기나요</h2>
+        <p class="sub">막대 색은 그 매장에서 많은 유형이에요.</p>
+        <ul class="stores">${storeEntries.map(([s, v]) => {
+          const comp = Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.types));
+          const top = storeEntries[0][1];
+          return `<li><button class="store-row" data-store="${esc(s)}">
+            <span class="bar-label">${esc(s)}</span>
+            <span class="stack" style="width:${(v / top) * 100}%">${comp.map(([t, k]) => `<i style="flex:${k};background:${colorOf(t)}" title="${esc(t)} ${k}건"></i>`).join('')}</span>
+            <span class="bar-val">${n(v)}건</span></button></li>`;
+        }).join('')}</ul>
+        <button class="linkish" id="all-chats">전체 문의 보기</button>
+      </section>
+      <section class="panel">
+        <h2>언제 많이 생기나요</h2>
+        <p class="sub">요일과 시간대별 문의 수예요. 진할수록 많아요.</p>
+        ${heatmap(ranged)}
+      </section>
+      <section class="panel">
+        <h2>고객이 겪은 증상</h2>
+        <p class="sub">상담 요약에서 찾은 증상이에요. 한 문의에 여러 개가 있을 수 있어요.</p>
+        ${symptoms.length ? bars(symptoms) : '<p class="muted">요약이 아직 없어요.</p>'}
+        <h3>어떻게 처리했나요</h3>
+        ${resolutions.length ? bars(resolutions, { color: () => 'var(--slate)' }) : ''}
+      </section>
+    </div>
+
+    <section class="panel wide">
+      <h2>최근 들어온 문의</h2>
+      <ul class="chats">${all.slice(0, 12).map((c) => chatRow(c)).join('')}</ul>
+      <button class="btn" id="more-chats">문의 더 보기</button>
+    </section>`;
+
+  bindCommon(view);
+  view.querySelector('#all-chats').onclick = () => go('all');
+  view.querySelector('#more-chats').onclick = () => go('all');
+}
+
+// ── 상세: 유형 하나 / 매장 하나 / 전체 문의
+function renderDetail() {
+  const view = document.getElementById('view');
+  const isType = S.view === 'type', isStore = S.view === 'store';
+  const base = S.chats.filter((c) => (isType ? c.types.includes(S.key) : isStore ? c.store === S.key : true));
+  const ranged = base.filter(inRange);
+  const { cur, last, prev } = halves();
+  const cntP = (p) => base.filter((c) => c.period === p).length;
+  const title = isType ? S.key : isStore ? S.key : '전체 문의';
+
+  const acts = isType ? S.actions.filter((a) => a.device_type === S.key).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
+  const actPeriods = new Set(acts.map((a) => periodOf(new Date(a.acted_on))));
+
+  // 목록 필터: 보름 막대, 매장(유형 화면) 또는 유형(매장 화면), 검색어
+  const q = S.q.trim();
+  const listed = (S.period ? base.filter((c) => c.period === S.period) : ranged)
+    .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
+      && (!q || `${c.summary || ''} ${c.first_message || ''} ${c.store}`.includes(q)));
+
+  const side = isType
+    ? (() => {
+      const st = Object.entries(countBy(ranged, (c) => c.store)).sort((a, b) => (a[0] === NO_STORE) - (b[0] === NO_STORE) || b[1] - a[1]);
+      return `<h3>매장 순위</h3>${bars(S.allStores ? st : st.slice(0, 10), { onKey: 'filter-store', dim: (k) => k === NO_STORE })}
+        ${st.length > 10 ? `<button class="linkish" id="all-stores">${S.allStores ? '접기' : `${st.length}곳 모두 보기`}</button>` : ''}`;
+    })()
+    : `<h3>유형 구성</h3>${bars(Object.entries(countBy(ranged, (c) => c.types)), { onKey: 'filter-type', color: colorOf, dim: (k) => k === UNKNOWN })}`;
+
+  const symptoms = tally(SYMPTOMS, ranged).slice(0, 6), resolutions = tallyFirst(RESOLUTIONS, ranged);
+
+  view.innerHTML = `
+    <nav class="crumb"><a href="#" id="back">전체 보기</a> <span aria-hidden="true">/</span> ${isType ? '유형' : isStore ? '매장' : '문의'}</nav>
+    <section class="detail-head">
+      <h1>${esc(title)}</h1>
+      <p>${RANGES[S.range]} <b>${n(ranged.length)}건</b>${S.view !== 'all' ? ` (전체의 ${Math.round((ranged.length / Math.max(1, S.chats.filter(inRange).length)) * 100)}%)` : ''}.
+        지난 보름(${periodLabel(last)})은 ${n(cntP(last))}건으로 ${changeWords(cntP(last), cntP(prev))}.
+        이번 보름은 지금까지 ${n(cntP(cur))}건이에요.</p>
+      ${isType && S.typeColor[S.key] ? `<span class="swatch" style="background:${colorOf(S.key)}" aria-hidden="true"></span>` : ''}
+    </section>
+    <div class="toolbar">${rangeSelect()}</div>
+
+    <section class="panel wide">
+      <h2>보름별 추이</h2>
+      <p class="sub">막대를 누르면 그 보름의 문의만 아래에 보여요. 흐린 막대는 아직 진행 중인 보름이에요.${actPeriods.size ? ' 점은 개선 조치를 한 보름이에요.' : ''}</p>
+      ${trend(base, { actPeriods })}
+      ${isType ? actionsBlock(base, acts) : ''}
+    </section>
+
+    <div class="grid">
+      <section class="panel">${side}</section>
+      <section class="panel">
+        <h3>고객이 겪은 증상</h3>${symptoms.length ? bars(symptoms) : '<p class="muted">찾은 증상이 없어요.</p>'}
+        <h3>어떻게 처리했나요</h3>${resolutions.length ? bars(resolutions, { color: () => 'var(--slate)' }) : '<p class="muted">-</p>'}
+      </section>
+      <section class="panel">
+        <h3>언제 많이 생기나요</h3>${heatmap(ranged)}
+      </section>
+    </div>
+
+    <section class="panel wide" id="list">
+      <h2>문의 ${n(listed.length)}건</h2>
+      <div class="filters">
+        <input type="search" id="q" value="${esc(q)}" placeholder="내용으로 찾기 (예: 탈수, 문 안 열림)" aria-label="문의 내용으로 찾기">
+        ${S.period ? `<button class="pill" data-clear="period">${periodLabel(S.period)} ✕</button>` : ''}
+        ${S.store ? `<button class="pill" data-clear="store">${esc(S.store)} ✕</button>` : ''}
+        ${S.type ? `<button class="pill" data-clear="type">${esc(S.type)} ✕</button>` : ''}
+      </div>
+      ${listed.length ? `<ul class="chats">${listed.slice(0, S.shown).map((c) => chatRow(c, { showType: !isType })).join('')}</ul>
+        ${listed.length > S.shown ? `<button class="btn" id="more">${n(listed.length - S.shown)}건 더 보기</button>` : ''}`
+        : '<p class="muted">조건에 맞는 문의가 없어요. 필터를 지우거나 다른 말로 찾아보세요.</p>'}
+    </section>`;
+
+  bindCommon(view);
+  view.querySelector('#back').onclick = (e) => { e.preventDefault(); go('home'); };
+  const relist = () => { S.shown = PAGE; render(); };
+  for (const b of view.querySelectorAll('[data-period]')) b.onclick = () => { S.period = S.period === b.dataset.period ? '' : b.dataset.period; relist(); view.querySelector('#list')?.scrollIntoView({ behavior: 'smooth' }); };
+  for (const b of view.querySelectorAll('[data-filter-store]')) b.onclick = () => { S.store = S.store === b.dataset.filterStore ? '' : b.dataset.filterStore; relist(); document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
+  for (const b of view.querySelectorAll('[data-filter-type]')) b.onclick = () => { S.type = S.type === b.dataset.filterType ? '' : b.dataset.filterType; relist(); document.getElementById('list')?.scrollIntoView({ behavior: 'smooth' }); };
+  for (const b of view.querySelectorAll('[data-clear]')) b.onclick = () => { S[b.dataset.clear] = ''; relist(); };
+  view.querySelector('#more')?.addEventListener('click', () => { S.shown += PAGE; render(); });
+  view.querySelector('#all-stores')?.addEventListener('click', () => { S.allStores = !S.allStores; render(); });
+  const qi = view.querySelector('#q');
+  let timer;
+  qi.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { S.q = qi.value; S.shown = PAGE; S.qFocus = true; render(); }, 250); };
+  if (S.qFocus) { S.qFocus = false; const el = document.getElementById('q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  const tr = view.querySelector('.trend'); tr.scrollLeft = tr.scrollWidth;
+  if (isType) bindActions(view);
+}
+
+// ── 개선 조치 (유형 화면)
+function actionsBlock(base, acts) {
+  const latest = acts.at(-1);
+  let compare = '';
+  if (latest) {
+    const P = S.periods, cur = P.at(-1), i = P.indexOf(periodOf(new Date(latest.acted_on)));
+    const cnt = (p) => base.filter((c) => c.period === p).length;
+    const avg = (ps) => (ps.length ? ps.reduce((s, p) => s + cnt(p), 0) / ps.length : null);
+    const before = i < 0 ? [] : P.slice(Math.max(0, i - 3), i), after = i < 0 ? [] : P.slice(i + 1).filter((p) => p !== cur).slice(0, 3);
+    const b = avg(before), a = avg(after), r1 = (v) => Math.round(v * 10) / 10;
+    compare = i < 0 ? '<p class="note">조치일이 데이터 기간 밖이라 비교할 수 없어요.</p>'
+      : !after.length ? `<p class="note">${esc(latest.acted_on)} 조치 이후 끝난 보름이 아직 없어요. 다음 보름이 끝나면 전후 비교가 보여요.</p>`
+      : `<p class="compare">최근 조치(${esc(latest.acted_on)}) 전에는 보름에 평균 <b>${r1(b)}건</b>, 이후에는 <b>${r1(a)}건</b>이에요.
+          ${b ? `<span class="chg ${a < b ? 'down' : a > b ? 'up' : 'flat'}">${a < b ? `${Math.round((1 - a / b) * 100)}% 줄었어요` : a > b ? `${Math.round((a / b - 1) * 100)}% 늘었어요` : '그대로예요'}</span>` : ''}
+          <span class="muted">(전 ${before.length}개 보름, 후 ${after.length}개 보름 비교, 조치한 보름은 뺐어요)</span></p>`;
+  }
+  return `<div class="actions">
+    <h3>개선 조치</h3>
+    ${compare}
+    ${acts.length ? `<ul class="act-list">${acts.slice().reverse().map((a) => `<li><span class="act-date">${esc(a.acted_on)}</span>
+      <span>${esc(a.note) || '<span class="muted">(메모 없음)</span>'}</span><span class="muted">${esc(a.created_by.split('@')[0])}</span>
+      ${a.created_by === S.email ? `<button class="linkish" data-del="${a.id}">삭제</button>` : ''}</li>`).join('')}</ul>` : ''}
+    ${acts.length || S.actOpen ? `<form class="act-form" id="act-form">
+      <input type="date" name="d" value="${todayKst()}" max="${todayKst()}" required aria-label="조치한 날">
+      <input type="text" name="n" maxlength="200" placeholder="무엇을 했나요? (예: 건조기 필터 전 매장 교체)" aria-label="조치 내용">
+      <button class="btn primary" type="submit">조치 기록</button></form>`
+      : '<p class="note">이 유형에 개선 조치를 했다면 <button class="linkish strong" id="act-open">날짜를 기록해 두세요</button>. 추이에 표시되고 조치 전후를 비교해 줘요.</p>'}
+  </div>`;
+}
+
+function bindActions(view) {
+  view.querySelector('#act-open')?.addEventListener('click', () => { S.actOpen = true; render(); document.querySelector('#act-form input[name=n]')?.focus(); });
+  view.querySelector('#act-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target; f.querySelector('button').disabled = true;
+    const { error } = await db.from('actions').insert({ device_type: S.key, acted_on: f.d.value, note: f.n.value.trim() });
+    if (error) { f.querySelector('button').disabled = false; alert('기록하지 못했어요: ' + error.message); return; }
+    await reloadActions();
+  });
+  for (const b of view.querySelectorAll('[data-del]')) b.onclick = async () => {
+    if (!confirm('이 조치 기록을 삭제할까요?')) return;
+    const { error } = await db.from('actions').delete().eq('id', Number(b.dataset.del));
+    if (error) { alert('삭제하지 못했어요: ' + error.message); return; }
+    await reloadActions();
+  };
+}
+async function reloadActions() {
+  const { data } = await db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on');
+  S.actions = data || [];
+  render();
+}
+
+// ── 관리자 페이지: 관리자 추가·삭제
 async function admins() {
   const view = document.getElementById('view');
   const { data: rows, error } = await db.from('approvers').select('email, added_by, added_at').order('email');
-  if (S.tab !== 'admins') return;
-  if (error) { view.innerHTML = `<div class="warn">관리자 목록을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+  if (error) { view.innerHTML = `<p class="warn">관리자 목록을 불러오지 못했어요: ${esc(error.message)}</p>`; return; }
+  const me = S.email.toLowerCase();
   view.innerHTML = `
-    <div class="card">
-      <p class="muted" style="margin-top:0">관리자는 관리자 페이지에 들어올 수 있고, 다른 관리자를 등록하거나 뺄 수 있어요.
-        회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있고, 등록된 사람은 회사 구글 계정으로 로그인하면 바로 관리자 페이지에 들어올 수 있어요.</p>
+    <section class="detail-head"><h1>관리자</h1>
+      <p>관리자는 이 페이지에서 다른 관리자를 등록하거나 뺄 수 있어요. 회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있어요.</p></section>
+    <section class="panel wide">
       <form class="act-form" id="admin-form">
         <input type="email" name="e" required placeholder="이름@${COMPANY_DOMAIN}" aria-label="추가할 관리자 이메일">
         <button class="btn primary" type="submit">관리자 추가</button>
       </form>
-    </div>
-    <div class="card"><table class="list"><thead><tr><th>이메일</th><th>추가한 사람</th><th></th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td>${esc(r.email)}${r.email === S.email.toLowerCase() ? ' <span class="muted">(나)</span>' : ''}</td>
-        <td class="muted">${r.added_by ? `${esc(r.added_by.split('@')[0])} · ${kst(r.added_at, { month: 'numeric', day: 'numeric' })}` : '처음 설정'}</td>
-        <td class="go">${r.email === S.email.toLowerCase() ? '' : `<button class="link" data-rm="${esc(r.email)}">빼기</button>`}</td></tr>`).join('')}
-    </tbody></table></div>`;
+      <ul class="admins">${rows.map((r) => `<li><span>${esc(r.email)}${r.email === me ? ' <span class="muted">(나)</span>' : ''}</span>
+        <span class="muted">${r.added_by ? `${esc(r.added_by.split('@')[0])}님이 ${kst(r.added_at, { month: 'numeric', day: 'numeric' })}에 추가` : '처음 설정'}</span>
+        ${r.email === me ? '' : `<button class="linkish" data-rm="${esc(r.email)}">관리자에서 빼기</button>`}</li>`).join('')}</ul>
+    </section>`;
   view.querySelector('#admin-form').onsubmit = async (e) => {
     e.preventDefault();
     const email = e.target.e.value.trim().toLowerCase();
@@ -375,24 +537,18 @@ async function admins() {
   };
 }
 
-async function reloadActions() {
-  const { data } = await db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on');
-  S.actions = data || [];
-  renderDetail();
-}
-
+// ── 시작
 async function route(session) {
   if (!session) return login();
   const email = session.user.email || '';
   if (email.toLowerCase().split('@')[1] !== COMPANY_DOMAIN) return notCompany(email);
   shell(email);
 }
-
-let shown = false;
+let started = false;
 sb.auth.onAuthStateChange((event, session) => {
   if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-    if (event === 'SIGNED_IN' && shown) return; // 토큰 갱신 등으로 다시 그리지 않는다
-    shown = true;
+    if (event === 'SIGNED_IN' && started) return; // 토큰 갱신 등으로 다시 그리지 않는다
+    started = true;
     route(session);
   }
 });
