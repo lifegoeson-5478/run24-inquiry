@@ -389,12 +389,12 @@ function bindRangeMenu(root) {
   const items = () => [...menu.querySelectorAll('.pk-item')];
   const outside = (e) => { if (!wrap.contains(e.target)) close(false); };
   const open = () => {
-    menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('open');
+    menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('is-open');
     (menu.querySelector('.pk-item.on') || items()[0]).focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
   };
   const close = (back = true) => {
-    menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); wrap.classList.remove('open');
+    menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); wrap.classList.remove('is-open');
     document.removeEventListener('pointerdown', outside);
     if (back) btn.focus({ preventScroll: true });
   };
@@ -467,7 +467,7 @@ function donut(all, { color, label, onKey } = {}) {
   }).join('');
   return `<div class="donut-wrap">
     <svg class="donut" viewBox="0 0 140 140" role="img" aria-label="유형 묶음 비중"><g transform="rotate(-90 70 70)">${arcs}</g>
-      <text x="70" y="69" text-anchor="middle" class="donut-n">${n(total)}</text><text x="70" y="85" text-anchor="middle" class="donut-l">건</text></svg>
+      <text x="70" y="77" text-anchor="middle" class="donut-n">${n(total)}<tspan class="donut-l" dx="2">건</tspan></text></svg>
     <ul class="legend">${entries.map(([k, v]) => `<li>${onKey && k !== OTHER ? `<button data-${onKey}="${esc(k)}">` : '<span>'}
       <i style="background:${color(k)}"></i><span class="lg-l">${esc(label(k))}</span><span class="lg-v">${n(v)}</span><span class="lg-p">${Math.round((v / total) * 100)}%</span>
       ${onKey && k !== OTHER ? '</button>' : '</span>'}</li>`).join('')}</ul></div>`;
@@ -621,7 +621,7 @@ function bindFocusPicker(view) {
   const search = pk.querySelector('.pk-search');
   const items = () => [...pk.querySelectorAll('.pk-item:not([hidden])')];
   const open = () => {
-    pk.hidden = false; btn.setAttribute('aria-expanded', 'true'); kpi.classList.add('open');
+    pk.hidden = false; btn.setAttribute('aria-expanded', 'true'); kpi.classList.add('is-open');
     search.value = ''; filter();
     // 화면 아래 남은 공간에 맞춰 목록 높이를 줄인다 (창이 화면 밖으로 넘치지 않게)
     const list = pk.querySelector('.pk-list');
@@ -632,7 +632,7 @@ function bindFocusPicker(view) {
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
   };
   const close = (back = true) => {
-    pk.hidden = true; btn.setAttribute('aria-expanded', 'false'); kpi.classList.remove('open');
+    pk.hidden = true; btn.setAttribute('aria-expanded', 'false'); kpi.classList.remove('is-open');
     document.removeEventListener('pointerdown', outside);
     if (back) btn.focus({ preventScroll: true });
   };
