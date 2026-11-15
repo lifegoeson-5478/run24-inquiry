@@ -87,7 +87,6 @@
   .list .s { white-space: nowrap; }
   .list .go { white-space: nowrap; text-align: right; }
   .list .sum { font-weight: 500; }
-  .list .orig { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
   .badge { display: inline-block; font-size: 11px; color: var(--est); border: 1px solid var(--est); border-radius: 999px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }
   .more { width: 100%; margin-top: 10px; }
 
@@ -306,7 +305,7 @@ function renderDetail() {
         <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${kst(r.opened_at, { hour: '2-digit', minute: '2-digit' })}</span></td>
         <td class="s">${esc(r.store)}</td>
         <td class="m"><span class="store">${esc(r.store)}</span>${r.summary
-          ? `<span class="sum">${esc(r.summary)}</span>${r.first_message ? `<span class="orig">고객: ${esc(r.first_message)}</span>` : ''}`
+          ? `<span class="sum">${esc(r.summary)}</span>`
           : esc(r.first_message) || '<span class="muted">(메시지 없음)</span>'}${r.estimated ? '<span class="badge" title="태그에 세부유형이 없어 메시지 내용으로 추정했어요">추정</span>' : ''}</td>
         <td class="go"><a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a></td>
       </tr>`).join('')}</tbody></table>
