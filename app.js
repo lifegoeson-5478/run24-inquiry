@@ -343,12 +343,27 @@ function hbars(entries, { onKey, color, label = (k) => k, dim, title } = {}) {
     ${onKey ? '</button>' : '</div>'}</li>`).join('')}</ul>`;
 }
 
+// 값이 비슷하게 모여 있으면 막대 바닥을 0 대신 범위 아래쪽에서 시작해 차이가 보이게 한다.
+// exclude: 기준 계산에서 뺄 칸(진행 중인 보름 등). 튀게 작은 값(중앙값의 40% 미만)도 기준에서 뺀다.
+function barScale(values, exclude = []) {
+  const max = Math.max(1, ...values);
+  const zero = { h: (v) => (v / max) * 100, floor: 0 };
+  const base = values.filter((v, i) => v > 0 && !exclude.includes(i)).sort((a, b) => a - b);
+  if (base.length < 3) return zero;
+  const med = base[Math.floor(base.length / 2)];
+  const lo = base.find((v) => v >= med * 0.4);
+  if ((max - lo) / max > 0.6) return zero; // 이미 차이가 크면 0부터 그린다
+  const floor = Math.max(0, Math.floor((lo - (max - lo) * 0.5) / 10) * 10); // 가장 낮은 막대가 대략 1/3 높이
+  return { h: (v) => (v <= floor ? 4 : 8 + (92 * (v - floor)) / (max - floor)), floor };
+}
+const axisNote = (floor) => (floor ? `<p class="axis-note">차이가 잘 보이도록 막대를 ${n(floor)}건부터 그렸어요</p>` : '');
+
 // 요일별 막대: 가장 많은 요일만 진하게
 function weekdayBars(chats) {
   const m = Array(7).fill(0); for (const c of chats) m[c.wd]++;
-  const max = Math.max(1, ...m), best = m.indexOf(Math.max(...m));
+  const best = m.indexOf(Math.max(...m)), sc = barScale(m);
   return `<div class="vbars">${m.map((v, i) => `<div class="vbar ${i === best ? 'top' : ''}" title="${WD_LABEL[i]}요일 ${n(v)}건">
-    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${(v / max) * 100}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>`;
+    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${sc.h(v)}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>${axisNote(sc.floor)}`;
 }
 
 // 상위 N개만 남기고 나머지는 '그 외'로 합친다
@@ -386,15 +401,16 @@ function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, labe
   color = withOther(color, '#E8E8E8'); label = withOther(label, '그 외');
   const per = Object.fromEntries(P.map((p) => [p, countBy(chats.filter((c) => c.period === p), kf)]));
   const tot = (p) => chats.filter((c) => c.period === p).length;
-  const max = Math.max(1, ...P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0)));
+  const sums = P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0));
+  const sc = barScale(sums, [P.length - 1]); // 진행 중인 보름은 기준에서 뺀다
   return `<div class="stack-trend">${P.map((p) => {
     const sum = Object.values(per[p]).reduce((s, v) => s + v, 0);
     return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${periodLabel(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
       <span class="st-v">${n(tot(p))}</span>
-      <span class="st-bar" style="height:${(sum / max) * 100}%">${order.filter((k) => per[p][k]).map((k) =>
+      <span class="st-bar" style="height:${sc.h(sum)}%">${order.filter((k) => per[p][k]).map((k) =>
         `<i style="flex:${per[p][k]};background:${color(k)}" title="${esc(label(k))} ${per[p][k]}건"></i>`).join('')}</span>
       <span class="st-l">${shortLabel(p)}${actPeriods.has(p) ? '<b class="st-flag" aria-label="개선 조치">●</b>' : ''}</span></button>`;
-  }).join('')}</div>`;
+  }).join('')}</div>${axisNote(sc.floor)}`;
 }
 
 function heatmap(chats) {

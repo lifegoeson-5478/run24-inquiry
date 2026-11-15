@@ -262,3 +262,4 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 @media (max-width: 860px) { .sk-nav { display: none; } }
 .skeleton .loading { padding: 0; margin-top: 4px; }
+.axis-note { margin: 8px 0 0; font-size: 11px; color: var(--soft); }
