@@ -84,7 +84,7 @@ const S = {
   email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(), groupShade: {}, groupOrder: [],
   view: 'home', key: '', range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
 };
-const RANGES = { 30: '최근 1개월', 90: '최근 3개월', all: '전체 기간' };
+const RANGES = { 30: '최근 1개월', 90: '최근 3개월', 180: '최근 6개월', 365: '최근 1년', all: '전체 기간' };
 const VIEWS = ['group', 'type', 'store', 'all'];
 
 function readHash() {
