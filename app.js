@@ -43,7 +43,7 @@ const S = { periods: [], types: [], byType: new Map(), actions: [], type: null, 
   tab: 'dash', approver: false, sugStatus: 'pending', sugShown: PAGE };
 // 일반 페이지(index.html)는 대시보드만, 관리자 페이지(admin.html)는 관리 기능만 보여준다.
 const ADMIN_PAGE = window.ADMIN_PAGE === true;
-const TABS = ADMIN_PAGE ? { sugg: '태그 제안', crit: '분류 기준', admins: '관리자' } : { dash: '대시보드' };
+const TABS = ADMIN_PAGE ? { admins: '관리자' } : { dash: '대시보드' };
 const DEFAULT_TAB = Object.keys(TABS)[0];
 S.tab = DEFAULT_TAB;
 const todayKst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
@@ -329,23 +329,14 @@ async function shell(email) {
   document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
   for (const b of app.querySelectorAll('[data-tab]')) b.onclick = () => showTab(b.dataset.tab);
   showTab(S.tab);
-  if (ADMIN_PAGE) refreshPendingCount();
-}
-
-async function refreshPendingCount() {
-  const { count } = await db.from('tag_suggestions').select('id', { count: 'exact', head: true }).eq('status', 'pending');
-  const el = document.getElementById('cnt-sugg');
-  if (el) el.textContent = count ? ` ${count}` : '';
 }
 
 function showTab(tab) {
-  if (S.tab === 'crit' && tab !== 'crit' && CR.dirty.size && !confirm(`저장하지 않은 기준이 ${CR.dirty.size}개 있어요. 그래도 이동할까요?`)) return;
-  if (tab !== 'crit') CR.dirty.clear();
   S.tab = tab;
   for (const b of app.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   writeHash();
   document.getElementById('view').innerHTML = '<p class="center muted">불러오는 중…</p>';
-  ({ dash: () => dashboard(S.email), sugg: suggestions, crit: criteria, admins })[tab]();
+  ({ dash: () => dashboard(S.email), admins })[tab]();
 }
 
 // ── 관리자 탭 (관리자 추가·삭제)
@@ -356,7 +347,7 @@ async function admins() {
   if (error) { view.innerHTML = `<div class="warn">관리자 목록을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
   view.innerHTML = `
     <div class="card">
-      <p class="muted" style="margin-top:0">관리자는 태그 제안 승인·반려, 분류 기준 수정, 관리자 등록을 할 수 있어요.
+      <p class="muted" style="margin-top:0">관리자는 관리자 페이지에 들어올 수 있고, 다른 관리자를 등록하거나 뺄 수 있어요.
         회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있고, 등록된 사람은 회사 구글 계정으로 로그인하면 바로 관리자 페이지에 들어올 수 있어요.</p>
       <form class="act-form" id="admin-form">
         <input type="email" name="e" required placeholder="이름@${COMPANY_DOMAIN}" aria-label="추가할 관리자 이메일">
@@ -382,233 +373,6 @@ async function admins() {
     if (error) { alert('빼지 못했어요: ' + error.message); return; }
     admins();
   };
-}
-
-// ── 태그 제안 탭
-// 현재 상태의 제안을 모두 불러와(수백~수천 건) 화면에서 변경 종류별로 거르고, 여러 건을 골라 한꺼번에 처리한다.
-const STATUS = { pending: '승인 대기', approved: '승인', rejected: '반려', dismissed: '거절' };
-const shortTag = (t) => t.replace(/^유형\//, '');
-const tagChips = (tags, cls = '') => tags.map((t) => `<span class="tagchip ${cls}">${esc(shortTag(t))}</span>`).join(' ');
-const pairKey = (r) => `${r.current_tags.map(shortTag).join(' + ')} → ${r.suggested_tags.map(shortTag).join(' + ')}`;
-const SG = { rows: [], counts: {}, pair: '', shown: PAGE, selected: new Set(), rejecting: null, busy: false };
-
-async function suggestions() {
-  const view = document.getElementById('view');
-  const [counts, rows] = await Promise.all([
-    Promise.all(Object.keys(STATUS).map((s) =>
-      db.from('tag_suggestions').select('id', { count: 'exact', head: true }).eq('status', s).then((r) => [s, r.count || 0]))),
-    (async () => {
-      const out = [];
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('tag_suggestions')
-          .select('id, chat_id, channel_id, opened_at, store, summary, current_tags, suggested_tags, reason, status, reject_reason, decided_by, decided_at, error')
-          .eq('status', S.sugStatus).order('opened_at', { ascending: false }).range(from, from + 999);
-        if (error) return { error };
-        out.push(...data);
-        if (data.length < 1000) return out;
-      }
-    })(),
-  ]);
-  if (S.tab !== 'sugg') return;
-  if (rows.error) { view.innerHTML = `<div class="warn">제안을 불러오지 못했어요: ${esc(rows.error.message)}</div>`; return; }
-  Object.assign(SG, { rows, counts: Object.fromEntries(counts), shown: PAGE, selected: new Set(), rejecting: null });
-  if (SG.pair && !rows.some((r) => pairKey(r) === SG.pair)) SG.pair = '';
-  view.innerHTML = `
-    <div class="card">
-      <p class="muted" style="margin-top:0">AI가 분류 기준으로 상담을 다시 읽고, 지금 태그와 다르게 판단한 상담이에요.
-        ${S.approver ? '승인하면 채널톡 태그가 바로 바뀌어요. 반려 사유는 분류 기준 탭에서 태그별로 모아 볼 수 있어요.' : ''}</p>
-      <div class="chips" id="sg-status"></div>
-      <div class="sg-tools">
-        <select id="sg-pair" aria-label="변경 종류로 거르기"></select>
-      </div>
-    </div>
-    <div class="card" id="sg-list"></div>`;
-  view.querySelector('#sg-pair').onchange = (e) => { SG.pair = e.target.value; SG.shown = PAGE; SG.selected.clear(); renderSuggestions(); };
-  renderSuggestions();
-}
-
-function renderSuggestions() {
-  const view = document.getElementById('view');
-  const statusEl = view.querySelector('#sg-status'), pairEl = view.querySelector('#sg-pair'), listEl = view.querySelector('#sg-list');
-  if (!listEl) return;
-  statusEl.innerHTML = Object.entries(STATUS).map(([k, v]) =>
-    `<button class="chip ${S.sugStatus === k ? 'on' : ''}" data-status="${k}">${v}<b class="num">${SG.counts[k] ?? 0}</b></button>`).join('');
-  for (const b of statusEl.querySelectorAll('[data-status]')) b.onclick = () => { S.sugStatus = b.dataset.status; SG.pair = ''; suggestions(); };
-
-  const pairs = {};
-  for (const r of SG.rows) pairs[pairKey(r)] = (pairs[pairKey(r)] || 0) + 1;
-  if (SG.pair && !pairs[SG.pair]) SG.pair = ''; // 이 변경을 다 처리했으면 전체 목록으로 돌아간다
-  pairEl.innerHTML = `<option value="">모든 변경 (${SG.rows.length}건)</option>` + Object.entries(pairs).sort((a, b) => b[1] - a[1])
-    .map(([k, n]) => `<option value="${esc(k)}" ${SG.pair === k ? 'selected' : ''}>${esc(k)} (${n})</option>`).join('');
-
-  const rows = SG.pair ? SG.rows.filter((r) => pairKey(r) === SG.pair) : SG.rows;
-  const visible = rows.slice(0, SG.shown);
-  const canAct = S.approver && S.sugStatus === 'pending';
-  const sel = [...SG.selected].filter((id) => rows.some((r) => r.id === id));
-  listEl.innerHTML = rows.length ? `
-    ${canAct ? `<div class="bulkbar">
-      <label><input type="checkbox" id="sg-all" ${sel.length && sel.length === rows.length ? 'checked' : ''}> ${SG.pair ? '이 변경' : '목록'} 전체 선택 (${rows.length}건)</label>
-      <span class="muted">${sel.length ? `${sel.length}건 선택됨` : ''}</span>
-      <button class="btn primary sm" data-bulk="approve" ${sel.length ? '' : 'disabled'}>선택 승인</button>
-      <button class="btn sm" data-bulk="dismiss" ${sel.length ? '' : 'disabled'}>선택 거절</button>
-    </div>` : ''}
-    <table class="list sugg"><thead><tr>${canAct ? '<th></th>' : ''}<th>날짜</th><th>상담</th><th>태그</th><th></th></tr></thead><tbody>
-    ${visible.map((r) => `<tr data-id="${r.id}">
-      ${canAct ? `<td class="ck"><input type="checkbox" data-ck="${r.id}" ${SG.selected.has(r.id) ? 'checked' : ''} aria-label="선택"></td>` : ''}
-      <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${esc(r.store)}</span></td>
-      <td class="m">${r.summary ? `<span class="sum">${esc(r.summary)}</span>` : '<span class="muted">(요약 없음)</span>'}
-        ${r.reason ? `<span class="why">AI 사유: ${esc(r.reason)}</span>` : ''}
-        ${r.reject_reason ? `<span class="why rej">반려 사유: ${esc(r.reject_reason)}</span>` : ''}
-        ${r.decided_by ? `<span class="muted small">${esc(STATUS[r.status])} · ${esc(r.decided_by.split('@')[0])} · ${kst(r.decided_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>` : ''}
-        ${r.error ? `<span class="why rej">오류: ${esc(r.error)}</span>` : ''}</td>
-      <td class="tagcol">${tagChips(r.current_tags, 'old')} <span class="arrow">→</span> ${tagChips(r.suggested_tags, 'new')}</td>
-      <td class="go">
-        <a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a>
-        ${canAct ? (SG.rejecting === r.id
-          ? `<form class="rej-form" data-rej="${r.id}"><input name="why" required maxlength="500" placeholder="반려 사유 (AI가 왜 틀렸는지)" aria-label="반려 사유">
-             <button class="btn sm primary">반려</button><button type="button" class="btn sm" data-cancel>취소</button></form>`
-          : `<div class="acts-btns">
-            <button class="btn primary sm" data-act="approve" data-id="${r.id}">승인</button>
-            <button class="btn sm" data-act="reject" data-id="${r.id}">반려</button>
-            <button class="btn sm" data-act="dismiss" data-id="${r.id}">거절</button></div>`) : ''}
-      </td></tr>`).join('')}</tbody></table>
-    ${rows.length > SG.shown ? `<button class="btn more" id="sugmore">더 보기 (${(rows.length - SG.shown).toLocaleString()}건 남음)</button>` : ''}`
-    : `<p class="muted">${STATUS[S.sugStatus]} 상태인 제안이 없어요.</p>`;
-
-  listEl.querySelector('#sugmore')?.addEventListener('click', () => { SG.shown += PAGE; renderSuggestions(); });
-  listEl.querySelector('#sg-all')?.addEventListener('change', (e) => {
-    for (const r of rows) e.target.checked ? SG.selected.add(r.id) : SG.selected.delete(r.id);
-    renderSuggestions();
-  });
-  for (const c of listEl.querySelectorAll('[data-ck]')) c.onchange = () => { c.checked ? SG.selected.add(Number(c.dataset.ck)) : SG.selected.delete(Number(c.dataset.ck)); renderSuggestions(); };
-  for (const b of listEl.querySelectorAll('[data-act]')) b.onclick = () => {
-    const id = Number(b.dataset.id);
-    if (b.dataset.act === 'reject') { SG.rejecting = id; renderSuggestions(); listEl.querySelector('.rej-form input')?.focus(); return; }
-    reviewOne(id, b.dataset.act);
-  };
-  for (const f of listEl.querySelectorAll('[data-rej]')) {
-    f.onsubmit = (e) => { e.preventDefault(); reviewOne(Number(f.dataset.rej), 'reject', f.why.value.trim()); };
-    f.querySelector('[data-cancel]').onclick = () => { SG.rejecting = null; renderSuggestions(); };
-  }
-  for (const b of listEl.querySelectorAll('[data-bulk]')) b.onclick = () => reviewMany(sel, b.dataset.bulk);
-}
-
-async function callReview(id, action, reason) {
-  const { error } = await sb.functions.invoke('review-suggestion', { body: { id, action, reason } });
-  if (!error) return null;
-  try { return (await error.context.json()).error || error.message; } catch { return error.message; }
-}
-
-function markDone(ids, action) {
-  const to = { approve: 'approved', reject: 'rejected', dismiss: 'dismissed' }[action];
-  SG.rows = SG.rows.filter((r) => !ids.includes(r.id));
-  SG.counts.pending -= ids.length; SG.counts[to] = (SG.counts[to] || 0) + ids.length;
-  for (const id of ids) SG.selected.delete(id);
-  SG.rejecting = null;
-  renderSuggestions();
-  refreshPendingCount();
-}
-
-async function reviewOne(id, action, reason) {
-  const tr = document.querySelector(`#sg-list tr[data-id="${id}"]`);
-  tr?.querySelectorAll('button, input').forEach((x) => (x.disabled = true));
-  const err = await callReview(id, action, reason);
-  if (err) { alert('처리하지 못했어요: ' + err); tr?.querySelectorAll('button, input').forEach((x) => (x.disabled = false)); return; }
-  markDone([id], action);
-}
-
-async function reviewMany(ids, action) {
-  if (!ids.length || SG.busy) return;
-  if (!confirm(`선택한 ${ids.length}건을 ${action === 'approve' ? '승인(채널톡 태그 변경)' : '거절'}할까요?`)) return;
-  SG.busy = true;
-  const done = [], failed = [];
-  const bar = document.querySelector('#sg-list .bulkbar .muted');
-  for (const id of ids) { // 채널톡 호출이 겹치지 않게 한 건씩 처리
-    if (bar) bar.textContent = `처리 중… ${done.length + failed.length}/${ids.length}`;
-    (await callReview(id, action)) ? failed.push(id) : done.push(id);
-  }
-  SG.busy = false;
-  markDone(done, action);
-  if (failed.length) alert(`${failed.length}건은 처리하지 못했어요. 남아 있는 건을 열어 이유를 확인해 주세요.`);
-}
-
-// ── 분류 기준 탭
-// 대분류별로 묶고, 고친 줄만 저장 버튼이 켜진다. 태그별 반려 사유를 기준 옆에 보여준다.
-const CR = { rows: [], dirty: new Set() };
-window.addEventListener('beforeunload', (e) => { if (CR.dirty.size) { e.preventDefault(); e.returnValue = ''; } });
-
-async function criteria() {
-  const view = document.getElementById('view');
-  const [{ data: rows, error }, { data: rej }] = await Promise.all([
-    db.from('tag_criteria').select('tag, channel_description, criteria, updated_by, updated_at').order('tag'),
-    db.from('tag_suggestions').select('suggested_tags, current_tags, reject_reason, summary').eq('status', 'rejected'),
-  ]);
-  if (S.tab !== 'crit') return;
-  if (error) { view.innerHTML = `<div class="warn">기준을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
-  CR.rows = rows; CR.dirty.clear();
-  const rejByTag = {};
-  for (const r of rej || []) for (const t of r.suggested_tags) (rejByTag[t] ||= []).push(r);
-  // 태그 이름 앞부분으로 묶는다: 결제_환불문의/…, 결제문의_포인트 → 결제 / 수거_배송문의, 수거문의 → 수거
-  const groupOf = (tag) => shortTag(tag).split(/[/_]/)[0].replace(/문의$/, '');
-  const groups = {};
-  for (const r of rows) (groups[groupOf(r.tag)] ||= []).push(r);
-  const filled = rows.filter((r) => r.criteria).length;
-  view.innerHTML = `
-    <div class="card">
-      <p class="muted" style="margin-top:0">AI는 이 기준으로 상담의 유형 태그를 판단해요. 기준이 비어 있으면 채널톡 태그 설명을, 그것도 없으면 태그 이름으로 판단해요.
-        "언제 붙이는지"와 "헷갈리면 어디로 보내는지"를 같이 적으면 정확해져요. ${S.approver ? '' : '기준 수정은 관리자만 할 수 있어요.'}</p>
-      <input type="search" id="critq" class="search" placeholder="태그나 기준 검색" aria-label="태그 검색">
-      <span class="muted">기준 작성 ${filled} / ${rows.length}개 · 반려 사유가 있는 태그 ${Object.keys(rejByTag).length}개</span>
-    </div>
-    ${Object.entries(groups).map(([g, list]) => `
-      <details class="card crit-group" open>
-        <summary><b>${esc(g)}</b> <span class="muted">${list.length}개${list.some((r) => rejByTag[r.tag]) ? ' · 반려 있음' : ''}</span></summary>
-        <table class="list crit"><tbody>
-        ${list.map((r) => `<tr data-tag="${esc(r.tag)}">
-          <td class="tagname">${esc(shortTag(r.tag))}
-            ${r.channel_description && r.channel_description !== r.criteria ? `<span class="muted small">채널톡 설명: ${esc(r.channel_description)}</span>` : ''}
-            ${rejByTag[r.tag] ? `<details class="rejs"><summary>반려 ${rejByTag[r.tag].length}건</summary>${rejByTag[r.tag].map((x) =>
-              `<p>“${esc(x.reject_reason)}”<span class="muted small">${esc(x.summary || '')} (${esc(x.current_tags.map(shortTag).join(', '))} → 이 태그)</span></p>`).join('')}</details>` : ''}</td>
-          <td>${S.approver
-            ? `<textarea maxlength="1000" rows="2" placeholder="이럴 때 이 태그를 붙여요 (헷갈리는 경우는 어디로 보내는지도)">${esc(r.criteria)}</textarea>
-               <div class="critbar"><button class="btn sm primary" data-save disabled>저장</button><span class="muted small saved">${r.updated_by ? `${esc(r.updated_by.split('@')[0])} · ${kst(r.updated_at, { month: 'numeric', day: 'numeric' })}` : ''}</span></div>`
-            : (esc(r.criteria) || '<span class="muted">(기준 없음)</span>')}</td></tr>`).join('')}
-        </tbody></table>
-      </details>`).join('')}`;
-
-  view.querySelector('#critq').oninput = (e) => {
-    const q = e.target.value.trim();
-    for (const tr of view.querySelectorAll('tr[data-tag]')) {
-      const r = CR.rows.find((x) => x.tag === tr.dataset.tag);
-      tr.hidden = q && !(`${r.tag} ${r.criteria}`.includes(q));
-    }
-    for (const g of view.querySelectorAll('.crit-group')) {
-      g.hidden = ![...g.querySelectorAll('tr[data-tag]')].some((tr) => !tr.hidden);
-      if (q) g.open = true;
-    }
-  };
-  for (const tr of view.querySelectorAll('tr[data-tag]')) {
-    const ta = tr.querySelector('textarea'); if (!ta) continue;
-    const btn = tr.querySelector('[data-save]'), saved = tr.querySelector('.saved');
-    const orig = () => CR.rows.find((x) => x.tag === tr.dataset.tag).criteria;
-    ta.oninput = () => {
-      const changed = ta.value.trim() !== orig();
-      btn.disabled = !changed; tr.classList.toggle('dirty', changed);
-      changed ? CR.dirty.add(tr.dataset.tag) : CR.dirty.delete(tr.dataset.tag);
-      if (changed) saved.textContent = '저장 안 됨';
-    };
-    ta.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !btn.disabled) btn.click(); };
-    btn.onclick = async () => {
-      const text = ta.value.trim();
-      btn.disabled = true;
-      const { error } = await db.from('tag_criteria')
-        .update({ criteria: text, updated_by: S.email, updated_at: new Date().toISOString() }).eq('tag', tr.dataset.tag);
-      if (error) { btn.disabled = false; saved.textContent = '저장 실패: ' + error.message; return; }
-      CR.rows.find((x) => x.tag === tr.dataset.tag).criteria = text;
-      CR.dirty.delete(tr.dataset.tag); tr.classList.remove('dirty');
-      saved.textContent = '저장됨';
-    };
-  }
 }
 
 async function reloadActions() {
