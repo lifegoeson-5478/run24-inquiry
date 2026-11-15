@@ -35,6 +35,35 @@
   .warn { background: var(--warn-bg); color: var(--warn); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; overflow-x: auto; }
+  .tabs button { border: 0; background: none; padding: 10px 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs .cnt { display: inline-block; min-width: 1em; margin-left: 4px; color: #fff; background: var(--up); border-radius: 999px; font-size: 11px; padding: 0 6px; }
+  .tabs .cnt:empty { display: none; }
+  .syncline { margin: 0 0 10px; }
+  .small { display: block; font-size: 12px; margin-top: 2px; }
+  .btn.sm { padding: 4px 10px; font-size: 13px; }
+  .tagchip { display: inline-block; font-size: 12px; border-radius: 6px; padding: 1px 6px; margin: 1px 0; background: var(--bg); border: 1px solid var(--line); }
+  .tagchip.old { text-decoration: line-through; color: var(--muted); }
+  .tagchip.new { background: var(--accent-soft); border-color: var(--accent); }
+  .arrow { color: var(--muted); }
+  .why { display: block; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .why.rej { color: var(--up); }
+  .sugg .tagcol { min-width: 200px; }
+  .acts-btns { display: flex; gap: 4px; justify-content: flex-end; margin-top: 6px; flex-wrap: wrap; }
+  .search { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: min(320px, 100%); margin-right: 8px; }
+  .crit .tagname { width: 34%; font-weight: 600; }
+  .crit textarea { width: 100%; font: inherit; font-size: 14px; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; resize: vertical; }
+  .critbar { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  @media (max-width: 640px) {
+    .sugg thead { display: none; }
+    .sugg tr { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+    .sugg td { border: 0; padding: 0; }
+    .sugg td.m, .sugg td.tagcol, .sugg td.go { grid-column: 1 / -1; }
+    .sugg td.go { text-align: left; }
+    .acts-btns { justify-content: flex-start; }
+    .crit .tagname { width: auto; }
+  }
   .kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
   .kpi .v { font-size: 22px; font-weight: 700; }
   .kpi .k { font-size: 13px; color: var(--muted); }
@@ -164,7 +193,9 @@ function change(now, before) {
 }
 
 // ── 화면 상태. URL 해시에 넣어서 링크로 공유할 수 있게 한다.
-const S = { periods: [], types: [], byType: new Map(), actions: [], type: null, period: null, store: null, rows: null, shown: PAGE, email: '' };
+const S = { periods: [], types: [], byType: new Map(), actions: [], type: null, period: null, store: null, rows: null, shown: PAGE, email: '',
+  tab: 'dash', approver: false, sugStatus: 'pending', sugShown: PAGE };
+const TABS = { dash: '대시보드', sugg: '태그 제안', crit: '분류 기준' };
 const todayKst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
 
 // 가장 최근 조치를 기준으로, 조치한 보름을 빼고 그 전 3구간과 그 후(진행 중인 보름 제외) 최대 3구간의 평균을 비교한다.
@@ -177,15 +208,17 @@ function beforeAfter(m, actedOn) {
 }
 function readHash() {
   let hash = location.hash;
-  try { if (!hash.includes('type=')) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
+  try { if (!/type=|tab=/.test(hash)) hash = sessionStorage.getItem('run24-hash') || hash; sessionStorage.removeItem('run24-hash'); } catch {}
   const h = new URLSearchParams(hash.slice(1));
   S.type = h.get('type'); S.period = h.get('period'); S.store = h.get('store');
+  S.tab = TABS[h.get('tab')] ? h.get('tab') : 'dash';
 }
 function writeHash() {
   const h = new URLSearchParams();
-  if (S.type) h.set('type', S.type);
-  if (S.period) h.set('period', S.period);
-  if (S.store) h.set('store', S.store);
+  if (S.tab !== 'dash') h.set('tab', S.tab);
+  else if (S.type) h.set('type', S.type);
+  if (S.tab === 'dash' && S.period) h.set('period', S.period);
+  if (S.tab === 'dash' && S.store) h.set('store', S.store);
   history.replaceState(null, '', h.toString() ? '#' + h : location.pathname);
 }
 
@@ -194,7 +227,7 @@ function login() {
     <p class="muted">회사 구글 계정(@${COMPANY_DOMAIN})으로 로그인해 주세요.</p>
     <button class="btn primary" id="go">구글로 로그인</button></div>`;
   // 공유받은 링크(#type=…)로 들어왔다면 로그인 후 같은 화면으로 돌아오도록 기억해 둔다.
-  try { if (location.hash.includes('type=')) sessionStorage.setItem('run24-hash', location.hash); } catch {}
+  try { if (/type=|tab=/.test(location.hash)) sessionStorage.setItem('run24-hash', location.hash); } catch {}
   document.getElementById('go').onclick = () => sb.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: location.origin + location.pathname, queryParams: { hd: COMPANY_DOMAIN } },
@@ -216,7 +249,7 @@ async function dashboard(email) {
     db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on'),
   ]);
   S.actions = actions || [];
-  if (error) { app.innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+  if (error) { document.getElementById('view').innerHTML = `<div class="warn">데이터를 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
 
   const first = rows.reduce((a, r) => (r.period_start < a ? r.period_start : a), periodOf(new Date()));
   S.periods = periodsFrom(first);
@@ -233,12 +266,8 @@ async function dashboard(email) {
   const all = Object.fromEntries(P.map((p) => [p, S.types.reduce((s, t) => s + (t.m[p] || 0), 0)]));
   const grand = sum(all, recent);
 
-  app.innerHTML = `
-    <header>
-      <h1>기기 오작동 문의 유형</h1>
-      <span class="muted">마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-        (매일 새벽 4시) · ${esc(email)} · <a href="#" id="out">로그아웃</a></span>
-    </header>
+  document.getElementById('view').innerHTML = `
+    <p class="muted syncline">마지막 갱신 ${sync?.last_synced_at ? kst(sync.last_synced_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'} (매일 새벽 4시)</p>
     ${sync?.last_error ? `<div class="warn">최근 갱신에 실패했어요. 숫자가 최신이 아닐 수 있어요. (${esc(sync.last_error)})</div>` : ''}
     <section class="kpis">
       <div class="card kpi"><div class="k">최근 3개월 오작동 문의</div><div class="v num">${grand.toLocaleString()}건</div></div>
@@ -264,9 +293,7 @@ async function dashboard(email) {
       <section class="detail" id="detail"></section>
     </div>`;
 
-  document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
   for (const b of app.querySelectorAll('.type')) b.onclick = () => pick(b.dataset.type, true);
-  readHash();
   pick(S.byType.has(S.type) ? S.type : S.types[0]?.name, false, true);
 }
 
@@ -408,6 +435,143 @@ function renderDetail() {
   const trend = el.querySelector('.trend'); trend.scrollLeft = trend.scrollWidth; // 최근 구간이 보이게
 }
 
+// ── 공통 머리말 + 탭
+async function shell(email) {
+  S.email = email;
+  readHash();
+  const { data: ok } = await db.rpc('is_approver');
+  S.approver = ok === true;
+  app.innerHTML = `
+    <header>
+      <h1>기기 오작동 문의 유형</h1>
+      <span class="muted">${esc(email)}${S.approver ? ' · 승인자' : ''} · <a href="#" id="out">로그아웃</a></span>
+    </header>
+    <nav class="tabs" role="tablist">${Object.entries(TABS).map(([k, v]) =>
+      `<button role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${v}<span class="cnt" id="cnt-${k}"></span></button>`).join('')}</nav>
+    <div id="view"></div>`;
+  document.getElementById('out').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); location.hash = ''; login(); };
+  for (const b of app.querySelectorAll('[data-tab]')) b.onclick = () => showTab(b.dataset.tab);
+  showTab(S.tab);
+  refreshPendingCount();
+}
+
+async function refreshPendingCount() {
+  const { count } = await db.from('tag_suggestions').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+  const el = document.getElementById('cnt-sugg');
+  if (el) el.textContent = count ? ` ${count}` : '';
+}
+
+function showTab(tab) {
+  S.tab = tab;
+  for (const b of app.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  writeHash();
+  document.getElementById('view').innerHTML = '<p class="center muted">불러오는 중…</p>';
+  ({ dash: () => dashboard(S.email), sugg: suggestions, crit: criteria })[tab]();
+}
+
+// ── 태그 제안 탭
+const STATUS = { pending: '승인 대기', approved: '승인', rejected: '반려', dismissed: '거절' };
+const tagChips = (tags, cls = '') => tags.map((t) => `<span class="tagchip ${cls}">${esc(t.replace(/^유형\//, ''))}</span>`).join(' ');
+
+async function suggestions() {
+  const view = document.getElementById('view');
+  const counts = await Promise.all(Object.keys(STATUS).map((s) =>
+    db.from('tag_suggestions').select('id', { count: 'exact', head: true }).eq('status', s).then((r) => r.count || 0)));
+  const { data: rows, error } = await db.from('tag_suggestions')
+    .select('id, chat_id, channel_id, opened_at, store, summary, current_tags, suggested_tags, reason, status, reject_reason, decided_by, decided_at, error')
+    .eq('status', S.sugStatus).order('opened_at', { ascending: false }).range(0, S.sugShown - 1);
+  if (S.tab !== 'sugg') return;
+  if (error) { view.innerHTML = `<div class="warn">제안을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+  const total = counts[Object.keys(STATUS).indexOf(S.sugStatus)];
+  view.innerHTML = `
+    <div class="card">
+      <p class="muted" style="margin-top:0">AI가 분류 기준으로 상담을 다시 읽고, 지금 태그와 다르게 판단한 상담이에요.
+        ${S.approver ? '승인하면 채널톡 태그가 바뀌어요. 반려 사유는 기준을 고칠 때 참고해요.' : '승인·반려는 지정된 승인자만 할 수 있어요.'}</p>
+      <div class="chips">${Object.entries(STATUS).map(([k, v], i) =>
+        `<button class="chip ${S.sugStatus === k ? 'on' : ''}" data-status="${k}">${v}<b class="num">${counts[i]}</b></button>`).join('')}</div>
+    </div>
+    <div class="card">
+      ${rows.length ? `<table class="list sugg"><thead><tr><th>날짜</th><th>상담</th><th>태그</th><th></th></tr></thead><tbody>
+      ${rows.map((r) => `<tr>
+        <td class="d num">${kst(r.opened_at, { month: 'numeric', day: 'numeric' })}<br><span class="muted">${esc(r.store)}</span></td>
+        <td class="m">${r.summary ? `<span class="sum">${esc(r.summary)}</span>` : '<span class="muted">(요약 없음)</span>'}
+          ${r.reason ? `<span class="why">AI 사유: ${esc(r.reason)}</span>` : ''}
+          ${r.reject_reason ? `<span class="why rej">반려 사유: ${esc(r.reject_reason)}</span>` : ''}
+          ${r.decided_by ? `<span class="muted small">${esc(STATUS[r.status])} · ${esc(r.decided_by.split('@')[0])} · ${kst(r.decided_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+          ${r.error ? `<span class="why rej">오류: ${esc(r.error)}</span>` : ''}</td>
+        <td class="tagcol">${tagChips(r.current_tags, 'old')} <span class="arrow">→</span> ${tagChips(r.suggested_tags, 'new')}</td>
+        <td class="go">
+          <a href="${CHANNEL_DESK(encodeURIComponent(r.channel_id), encodeURIComponent(r.chat_id))}" target="_blank" rel="noopener">채널톡 ↗</a>
+          ${S.approver && r.status === 'pending' ? `<div class="acts-btns">
+            <button class="btn primary sm" data-act="approve" data-id="${r.id}">승인</button>
+            <button class="btn sm" data-act="reject" data-id="${r.id}">반려</button>
+            <button class="btn sm" data-act="dismiss" data-id="${r.id}">거절</button></div>` : ''}
+        </td></tr>`).join('')}</tbody></table>
+      ${total > rows.length ? `<button class="btn more" id="sugmore">더 보기 (${(total - rows.length).toLocaleString()}건 남음)</button>` : ''}`
+      : `<p class="muted">${STATUS[S.sugStatus]} 상태인 제안이 없어요.</p>`}
+    </div>`;
+  for (const b of view.querySelectorAll('[data-status]')) b.onclick = () => { S.sugStatus = b.dataset.status; S.sugShown = PAGE; suggestions(); };
+  view.querySelector('#sugmore')?.addEventListener('click', () => { S.sugShown += PAGE; suggestions(); });
+  for (const b of view.querySelectorAll('[data-act]')) b.onclick = () => review(Number(b.dataset.id), b.dataset.act, b);
+}
+
+async function review(id, action, btn) {
+  let reason;
+  if (action === 'reject') {
+    reason = prompt('반려 사유를 적어주세요. (AI가 왜 틀렸는지 — 기준을 고칠 때 참고해요)');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('반려 사유를 적어주세요.'); return; }
+  }
+  if (action === 'approve' && !confirm('채널톡 상담의 유형 태그를 제안대로 바꿀까요?')) return;
+  for (const b of btn.parentElement.querySelectorAll('button')) b.disabled = true;
+  const { data, error } = await sb.functions.invoke('review-suggestion', { body: { id, action, reason } });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch {}
+    alert('처리하지 못했어요: ' + msg);
+    for (const b of btn.parentElement.querySelectorAll('button')) b.disabled = false;
+    return;
+  }
+  await suggestions();
+  refreshPendingCount();
+}
+
+// ── 분류 기준 탭
+async function criteria() {
+  const view = document.getElementById('view');
+  const { data: rows, error } = await db.from('tag_criteria').select('tag, channel_description, criteria, updated_by, updated_at').order('tag');
+  if (S.tab !== 'crit') return;
+  if (error) { view.innerHTML = `<div class="warn">기준을 불러오지 못했어요: ${esc(error.message)}</div>`; return; }
+  const filled = rows.filter((r) => r.criteria).length;
+  view.innerHTML = `
+    <div class="card">
+      <p class="muted" style="margin-top:0">AI는 이 기준으로 상담의 유형 태그를 판단해요. 기준이 비어 있으면 채널톡 태그 설명을, 그것도 없으면 태그 이름으로 판단해요.
+        태그 목록은 매일 채널톡에서 가져와요. ${S.approver ? '' : '기준 수정은 지정된 승인자만 할 수 있어요.'}</p>
+      <input type="search" id="critq" class="search" placeholder="태그 검색" aria-label="태그 검색">
+      <span class="muted">기준 작성 ${filled} / ${rows.length}개</span>
+    </div>
+    <div class="card">${rows.length ? `<table class="list crit"><thead><tr><th>태그</th><th>기준</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr data-tag="${esc(r.tag)}">
+        <td class="tagname">${esc(r.tag.replace(/^유형\//, ''))}${r.channel_description ? `<span class="muted small">채널톡 설명: ${esc(r.channel_description)}</span>` : ''}</td>
+        <td>${S.approver
+          ? `<textarea maxlength="1000" rows="2" placeholder="이럴 때 이 태그를 붙여요 (예: 결제 후 건조기가 돌지 않거나 건조가 덜 된 경우. 고객 조작 실수는 제외)">${esc(r.criteria)}</textarea>
+             <div class="critbar"><button class="btn sm primary" data-save>저장</button><span class="muted small saved">${r.updated_by ? `${esc(r.updated_by.split('@')[0])} · ${kst(r.updated_at, { month: 'numeric', day: 'numeric' })}` : ''}</span></div>`
+          : (esc(r.criteria) || '<span class="muted">(기준 없음)</span>')}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="muted">아직 태그 목록이 없어요. 다음 분류 실행 때 채널톡에서 가져와요.</p>'}</div>`;
+  view.querySelector('#critq').oninput = (e) => {
+    const q = e.target.value.trim();
+    for (const tr of view.querySelectorAll('tr[data-tag]')) tr.hidden = q && !tr.dataset.tag.includes(q);
+  };
+  for (const b of view.querySelectorAll('[data-save]')) b.onclick = async () => {
+    const tr = b.closest('tr'), text = tr.querySelector('textarea').value.trim();
+    b.disabled = true;
+    const { error } = await db.from('tag_criteria')
+      .update({ criteria: text, updated_by: S.email, updated_at: new Date().toISOString() }).eq('tag', tr.dataset.tag);
+    b.disabled = false;
+    tr.querySelector('.saved').textContent = error ? '저장 실패: ' + error.message : '저장됨';
+  };
+}
+
 async function reloadActions() {
   const { data } = await db.from('actions').select('id, device_type, acted_on, note, created_by').order('acted_on');
   S.actions = data || [];
@@ -418,7 +582,7 @@ async function route(session) {
   if (!session) return login();
   const email = session.user.email || '';
   if (email.toLowerCase().split('@')[1] !== COMPANY_DOMAIN) return notCompany(email);
-  dashboard(email);
+  shell(email);
 }
 
 let shown = false;
