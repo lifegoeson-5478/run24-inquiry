@@ -59,6 +59,140 @@ const RESOLUTIONS = [
   ['현장 점검·수리', /방문|기사|수리|점검|AS|교체/],
   ['안내로 마무리', /./], // 위 처리가 하나도 없으면 여기로
 ];
+// 묶음별 '무슨 문의였나'(여러 개 셀 수 있음)와 '어떻게 처리했나'(먼저 맞는 하나). 마지막 처리 규칙은 나머지 전부.
+// ponytail: 단순 키워드 규칙. 2026-11-16 묶음별 요약 60건씩 읽고 만듦. 안 맞는 표현이 보이면 여기에 추가한다.
+const DONE = ['안내로 마무리', /./];
+const INSIGHTS = {
+  기기오작동: { title: '증상과 처리', a: '증상', b: '처리', issues: SYMPTOMS, res: RESOLUTIONS },
+  세탁: {
+    title: '세탁 문제와 처리', a: '문제', b: '처리',
+    issues: [
+      ['오염이 안 지워짐', /오염|얼룩|이염|황변|찌든|때\b|때가/],
+      ['손상·변형', /손상|찢|늘어|줄어|줄임|변형|변색|올풀|터짐|눌림|탈색/],
+      ['세탁물 못 찾음·바뀜', /타인|오매칭|오수령|미수령|분실|누락|미출고|빈 옷걸이/],
+      ['접수증·바코드 오류', /접수증|바코드|출력/],
+      ['수선 문의', /수선|기장|단추|지퍼/],
+      ['가격·수량', /금액|가격|비용|수량|차액/],
+    ],
+    res: [
+      ['재세탁·재케어', /재세탁|재케어|재접수/],
+      ['보상·심의·A/S', /보상|심의|A\/S|AS/],
+      ['포인트·환불', /포인트|환불/],
+      ['찾아서 출고', /출고|매칭|회수/],
+      DONE,
+    ],
+  },
+  수거: {
+    title: '배송 문의와 처리', a: '문의 내용', b: '처리',
+    issues: [
+      ['도착 일정 문의', /도착|일정|언제|수령\s?일|당일/],
+      ['입고 지연', /지연|늦|물량|공간|랙|적치/],
+      ['누락·분실', /누락|분실|미도착|미입고|미수령/],
+      ['오배송·타인 세탁물', /오배송|오출고|오입고|타인|오매칭/],
+      ['부속품', /부속|허리끈|모자|버클/],
+    ],
+    res: [
+      ['보상', /보상/],
+      ['우선 입고·재배송', /우선|재배송|재출고|배송 완료|출고/],
+      ['원격 개방', /원격/],
+      ['일정 안내로 마무리', /./],
+    ],
+  },
+  결제: {
+    title: '결제 문제와 처리', a: '문제', b: '처리',
+    issues: [
+      ['결제 후 기기 미작동', /미작동|작동\s?안|오작동|오류|미건조|건조 불량/],
+      ['현금·동전 인식', /현금|동전|지폐|미인식|오투입/],
+      ['중복·과다 결제', /중복|이중|과청구|불일치|전액/],
+      ['기기 잘못 선택', /오선택|잘못\s?(눌|선택|결제|투입)|혼동|타\s?기기|다른\s?기기|위치/],
+      ['런드리페이·포인트', /론디페이|런드리페이|포인트|캐시|충전/],
+      ['품목 오등록', /품목|오등록/],
+      ['자판기', /자판기/],
+      ['영수증', /영수증/],
+    ],
+    res: [
+      ['환불 불가 안내', /불가/],
+      ['포인트로 환불', /포인트(로|\s?(재)?지급|\s?환불)/],
+      ['카드·계좌 환불', /승인\s?취소|카드사|계좌|환불\s?(처리|완료|접수)/],
+      ['점주에게 전달', /점주|경영주/],
+      DONE,
+    ],
+  },
+  매장이용: {
+    title: '매장 이용 불편과 처리', a: '불편', b: '처리',
+    issues: [
+      ['기기 미작동·멈춤', /미작동|작동\s?안|작동하지|중단|멈|오작동|사용 중/],
+      ['세탁물 오염·이물질', /오염|이물질|얼룩/],
+      ['탈수·건조 미흡', /탈수\s?(미흡|안|불량|부족)|재탈수|덜\s?마|미건조|건조\s?(가\s?)?(안|덜|불량|미흡)|젖|배기/],
+      ['이전 사용자 세탁물', /방치|미수거|이전 이용자/],
+      ['투입구·문', /투입구|문이|열리지|닫혀/],
+      ['쿠폰·이벤트', /쿠폰|이벤트/],
+      ['접수증 누락', /접수증/],
+      ['매장 시설', /출입문|봉투|화장실|조명|청소|카트/],
+    ],
+    res: [
+      ['원격 조치', /원격|초기화|제어|재작동|드럼세척/],
+      ['환불·포인트', /환불|포인트|차액/],
+      ['점주·담당 부서 전달', /점주|담당 부서|전달/],
+      DONE,
+    ],
+  },
+  주차등록: {
+    title: '주차 문의와 처리', a: '문의 내용', b: '처리',
+    issues: [
+      ['무료 주차 등록 요청', /등록\s?(을\s?)?(완료|처리|요청)|시간\s?등록|\d시간|주차\s?(등록|부탁|요청)|등록\s?(부탁|해\s?주)|차량\s?번호|\d{2,3}[가-힣]\s?\d{4}/],
+      ['등록 실패·오류', /실패|오류|누락|접속|초기화|입차 내역/],
+      ['주차 가능 여부', /가능|유상|지원 문의|공간/],
+      ['주차비 환불', /환불|자비/],
+    ],
+    res: [
+      ['주차비 환불', /환불/],
+      ['상담원이 대신 등록', /등록\s?(을\s?)?(완료|처리)|등록했|지원함/],
+      ['등록 방법 안내', /QR|방법|직접 등록|사전 등록|주차권/],
+      DONE,
+    ],
+  },
+  기타: {
+    title: '문의 내용과 처리', a: '문의 내용', b: '처리',
+    issues: [
+      ['알림톡 오발송·미발송', /알림/],
+      ['회원정보·번호 변경', /전화번호|번호 변경|회원 번호|아이디|정보 (조회|변경)/],
+      ['탈퇴·개인정보 삭제', /탈퇴|개인정보/],
+      ['인증번호', /인증/],
+      ['외부 기관·업체 연락', /관리사무소|경제총조사|지자체|조사|창업/],
+    ],
+    res: [
+      ['탈퇴·재가입 안내', /탈퇴|재가입/],
+      ['전산 처리·발송 중단', /전산|중단|차단|수정|조치/],
+      ['담당 부서 전달', /부서|이관|전달/],
+      DONE,
+    ],
+  },
+  매장관리: {
+    title: '문의 내용과 처리', a: '문의 내용', b: '처리',
+    issues: [
+      ['시설·환경', /간판|청소|시설|조명|냉난방|에어컨|누수/],
+      ['민원·항의', /민원|항의|소음/],
+    ],
+    res: [['점주에게 전달', /점주|전달/], DONE],
+  },
+  OB유형: {
+    title: '연락한 이유와 결과', a: '연락한 이유', b: '결과',
+    issues: [
+      ['기기 오류 환불 안내', /환불|과청구|오결제|이중결제/],
+      ['세탁 사고 안내', /손상|사고|A\/S/],
+      ['세탁물 미수령·타인 수령', /미수령|타인/],
+      ['고객 의사 확인', /동의|합의|의사/],
+    ],
+    res: [
+      ['부재로 다시 연락 예정', /부재|재시도|재통화|재인입/],
+      ['보상·A/S 진행', /보상|A\/S/],
+      ['환불 처리', /환불\s?(처리|완료|접수)|포인트/],
+      DONE,
+    ],
+  },
+};
+INSIGHTS.셀프장비 = INSIGHTS.기기오작동; // 셀프장비 태그는 기기 문의라 오작동 기준을 쓴다
 // 증상은 한 문의에 여러 개를 셀 수 있다.
 const tally = (rules, chats) => rules.map(([label, re]) => [label, chats.filter((c) => re.test(textOf(c))).length])
   .filter(([, v]) => v).sort((a, b) => b[1] - a[1]);
@@ -294,17 +428,18 @@ async function ensureText(chats) {
   }));
   return true;
 }
-let malTextState = 'idle'; // idle → loading → done
-async function loadMalText() {
-  if (malTextState !== 'idle') return;
-  malTextState = 'loading';
-  const { count } = await db.from('chat_list').select('chat_id', { count: 'exact', head: true }).like('device_type', '기기오작동문의%');
+const textState = {}; // 묶음 → loading | done
+async function loadGroupText(g) {
+  if (textState[g]) return;
+  textState[g] = 'loading';
+  const like = `${g}%`; // 태그 이름 앞부분이 묶음 이름이다 (세탁_수선문의/… → 세탁)
+  const { count } = await db.from('chat_list').select('chat_id', { count: 'exact', head: true }).like('device_type', like);
   await pool(Array.from({ length: Math.ceil((count || 0) / 1000) }, (_, k) => async () => {
-    const { data } = await db.from('chat_list').select('chat_id, summary, first_message').like('device_type', '기기오작동문의%')
+    const { data } = await db.from('chat_list').select('chat_id, summary, first_message').like('device_type', like)
       .order('chat_id').range(k * 1000, k * 1000 + 999);
     for (const r of data || []) TEXT.set(r.chat_id, { summary: r.summary, first_message: r.first_message });
   }));
-  malTextState = 'done';
+  textState[g] = 'done';
   afterEntrance(render);
 }
 // 검색은 서버에서: 검색어가 들어간 상담 ID를 받아 둔다
@@ -327,7 +462,6 @@ function countBy(list, keyFn) {
   return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]));
 }
 const inRange = (c) => { const [f, t] = rangeSpan(); return c.ms >= f && c.ms < t; };
-const isMal = (c) => c.groups.includes(MAL_GROUP);
 const sortGroups = (entries) => entries.sort((a, b) => (a[0] === 'OB유형') - (b[0] === 'OB유형') || b[1] - a[1]);
 function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
 
@@ -644,16 +778,18 @@ function chatRow(c, reveal = false) {
     <div class="chat-foot">${c.types.map(tagChip).join('')}${c.estimated ? '<span class="est" title="상담원 태그에 세부유형이 없어 내용으로 추정했어요">추정</span>' : ''}</div></li>`;
 }
 
-// 기기 오작동 문의만 골라 증상과 처리 방식 (규칙이 오작동 상담에 맞춰져 있어서)
-function malCard(chats, title = '기기 오작동 증상과 처리') {
-  const mal = chats.filter(isMal);
-  if (!mal.length) return '';
-  if (malTextState !== 'done') { loadMalText(); return card(title, '상담 요약을 불러오는 중이에요', `<div class="stacked" aria-busy="true"><div>${sk('40px', 12)}${skLines(5)}</div><div>${sk('40px', 12)}${skLines(4)}</div></div>`); }
-  const sym = tally(SYMPTOMS, mal).slice(0, 6), res = tallyFirst(RESOLUTIONS, mal);
-  return card(title, `오작동 상담 ${n(mal.length)}건의 요약에서 찾았어요`, `
+// 묶음 하나의 상담 요약에서 '무슨 문의였나'와 '어떻게 처리했나'를 센다
+function insightCard(chats, g, title) {
+  const R = INSIGHTS[g]; if (!R) return '';
+  const mine = chats.filter((c) => c.groups.includes(g));
+  if (!mine.length) return '';
+  title = title || R.title;
+  if (textState[g] !== 'done') { loadGroupText(g); return card(title, '상담 요약을 불러오는 중이에요', `<div class="stacked" aria-busy="true"><div>${sk('40px', 12)}${skLines(5)}</div><div>${sk('40px', 12)}${skLines(4)}</div></div>`); }
+  const issues = tally(R.issues, mine).slice(0, 6), res = tallyFirst(R.res, mine).sort((a, b) => b[1] - a[1]);
+  return card(title, `${esc(groupLabel(g).replace(/ 상담$/, ""))} 상담 ${n(mine.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
-      <div><h3>증상</h3>${sym.length ? hbars(sym) : '<p class="muted">찾은 증상이 없어요.</p>'}</div>
-      <div><h3>처리</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
+      <div><h3>${R.a}</h3>${issues.length ? hbars(issues) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
+      <div><h3>${R.b}</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
     </div>`);
 }
 
@@ -785,7 +921,7 @@ function renderHome() {
           <span class="hbar-val">${n(v)}</span></button></li>`;
       }).join('')}</ul>`)}
       ${card('시간대별 상담', '요일과 시간대별로 진할수록 많아요', heatmap(ranged))}
-      ${malCard(ranged)}
+      ${insightCard(ranged, MAL_GROUP, '기기 오작동 증상과 처리')}
       ${card('최근 상담', '', `<ul class="chats compact">${all.slice(0, 5).map(chatRow).join('')}</ul><button class="btn ghost" id="more-chats">전체 상담 보기</button>`, { cls: 'span-3' })}
     </div>`;
 
@@ -858,7 +994,7 @@ function renderDetail() {
       ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
       ${storeCard}
       ${card('시간대별 상담', '진할수록 많아요', heatmap(ranged))}
-      ${malCard(ranged, V === 'group' && K === MAL_GROUP || V === 'type' && groupOf(K) === MAL_GROUP ? '증상과 처리' : '기기 오작동 증상과 처리')}
+      ${V === 'group' || V === 'type' ? insightCard(ranged, V === 'group' ? K : groupOf(K)) : insightCard(ranged, MAL_GROUP, '기기 오작동 증상과 처리')}
     </div>
 
     <section class="card list-card" id="list">
