@@ -408,3 +408,20 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .tip-ex { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 예시는 한 줄로 */
 .picker[hidden] { display: none !important; } /* display: grid가 hidden을 덮어쓰지 않게 */
 .kpi button.kpi-text { max-width: 100%; text-align: left; } /* 긴 이름은 카드 안에서 … 처리 */
+
+/* 개선 과제 보드 */
+.task-top { list-style: none; padding: 0; margin: 0 0 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; counter-reset: task; }
+.task-top li { counter-increment: task; display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; column-gap: 10px; row-gap: 2px;
+  background: var(--tint); border-radius: 12px; padding: 12px 14px; }
+.task-top li::before { content: counter(task); grid-row: span 2; font-size: 20px; font-weight: 700; color: var(--ink); line-height: 1; }
+.task-who { grid-column: 2; font-size: 12px; color: var(--mid); }
+.task-top b { grid-column: 2; font-size: 15px; font-weight: 600; }
+.task-n { grid-column: 3; grid-row: 1 / span 2; align-self: center; font-size: 13px; color: var(--mid); font-variant-numeric: tabular-nums; }
+.task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px 24px; }
+.task-block { border-top: 1px solid var(--line); padding-top: 12px; min-width: 0; }
+.task-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.task-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.task-head span { font-size: 12px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.task-items { margin: 8px 0 0; font-size: 12px; color: var(--mid); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.task-items span { color: var(--ink); }
+.task-note { margin: 14px 0 0; font-size: 12px; color: var(--soft); }

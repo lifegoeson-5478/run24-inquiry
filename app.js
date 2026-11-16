@@ -794,7 +794,7 @@ function chatRow(c, reveal = false) {
 }
 
 // 묶음 하나의 상담 요약에서 '무슨 문의였나'와 '어떻게 처리했나'를 센다
-function insightCard(chats, g, title) {
+function insightCard(chats, g, title, { resOnly = false } = {}) {
   const R = INSIGHTS[g]; if (!R) return '';
   const mine = chats.filter((c) => c.groups.includes(g));
   if (!mine.length) return '';
@@ -812,11 +812,148 @@ function insightCard(chats, g, title) {
   const otherN = mine.filter(isOther).length;
   if (otherN) issues.push([OTHER, otherN]);
   const issueTip = examples((c, k) => (k === OTHER ? isOther(c) : issueRe[k].test(textOf(c))));
+  if (resOnly) title = '처리 방식';
   return card(title, `${esc(groupLabel(g).replace(/ 상담$/, ""))} 상담 ${n(mine.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
-      <div><h3>${R.a}</h3>${issues.length ? hbars(issues, { top: Math.max(1, ...issues.filter(([k]) => k !== OTHER).map(([, v]) => v)), tip: issueTip, dim: (k) => k === OTHER, color: (k) => (k === OTHER ? "var(--soft)" : "var(--ink)") }) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
+      ${resOnly ? '' : `<div><h3>${R.a}</h3>${issues.length ? hbars(issues, { top: Math.max(1, ...issues.filter(([k]) => k !== OTHER).map(([, v]) => v)), tip: issueTip, dim: (k) => k === OTHER, color: (k) => (k === OTHER ? "var(--soft)" : "var(--ink)") }) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>`}
       <div><h3>${R.b}</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
     </div>`);
+}
+
+// ── 개선 과제: 묶음 안을 '대상'(기기·영역)으로 나누고, 대상마다 많이 나온 문제를 센다.
+// 대상은 상담원이 붙인 세부 유형 태그로 정하고, 세부 유형이 없으면 내용에서 추정한다(guess).
+// 문제는 요약 문장 키워드 또는 세부 유형 태그로 센다. ponytail: 2026-11-16 실제 요약을 읽고 만든 규칙. 안 맞으면 여기에 추가.
+const hasTag = (c, ...names) => c.types.some((t) => names.some((nm) => t.endsWith('/' + nm)));
+const byTag = (names, re) => (c) => hasTag(c, ...names) || re.test(textOf(c));
+const ITEMS = [['패딩', /패딩|다운/], ['셔츠', /셔츠/], ['니트', /니트|스웨터|가디건/], ['코트', /코트/], ['정장·자켓', /정장|자켓|재킷|블레이저/],
+  ['바지', /바지|슬랙스|청바지/], ['운동화·신발', /운동화|신발/], ['이불·침구', /이불|침구|베개/], ['티셔츠', /티셔츠|맨투맨|후드/], ['원피스·치마', /원피스|치마|스커트/]];
+const NOT_WORK = /결제.{0,10}(미작동|작동\s?안|작동하지|오류|미인식)|미작동|시작\s?(버튼)?\s?(미작동|안\s?됨|안\s?돼)|작동\s?(불가|안\s?함|하지\s?않)/;
+const SUBJECTS = {
+  기기오작동: [
+    { name: '드라이스테이션', tags: ['드라이스테이션오류', '접수증미출력'], guess: /드라이|투입구|접수증|반출|수거함/, problems: [
+      ['세탁물이 안 나옴', /안\s?나|나오지|미배출|미수령|미회수|미출고|못\s?찾|떨어/],
+      ['문·투입구가 먼저 닫힘', /(문|투입구)[이가]?\s?(먼저\s?)?(닫혀|닫혔|닫힘|안\s?닫|닫히지)|못\s?(꺼내|넣)/],
+      ['문·투입구가 안 열림', /(문|투입구|보관함)[이가]?\s?(안\s?열|열리지)/],
+      ['접수증 미출력·접수 오류', /접수증|접수\s?(중\s?)?오류|출력/],
+      ['보관함 비밀번호', /비밀번호/],
+      ['결제 오류', /결제|이중|카드/],
+      ['화면 오류·멈춤', /화면|키오스크|초기화|멈/],
+    ] },
+    { name: '세탁기', tags: ['세탁기오류', '세탁기오류_세제,섬유유연제', '콤보오류'], guess: /세탁기|탈수|세제|유연제/, problems: [
+      ['결제 후 작동 안 함', NOT_WORK],
+      ['탈수 안 됨', /탈수/],
+      ['도중에 멈춤', /멈|중단|정지|안\s?끝/],
+      ['코스·시간 잘못 설정', /코스|시간/],
+      ['물 넘침·누수·배수', /물\s?넘|누수|배수|급수|물이/],
+      ['세제·유연제', byTag(['세탁기오류_세제,섬유유연제'], /세제|유연제|거품/)],
+      ['동전·카드 인식', /동전|코인\s?투입\s?오류|미인식|카드\s?인식/],
+      ['세탁물 오염·이물질', /오염|이물질|얼룩/],
+    ] },
+    { name: '건조기', tags: ['건조기오류'], guess: /건조/, problems: [
+      ['결제 후 작동 안 함', NOT_WORK],
+      ['덜 마름·건조 불량', /덜|미건조|건조\s?(가\s?)?(안|불량|거의|되지)|젖|배기/],
+      ['도중에 멈춤·에러', /멈|에러|중단/],
+      ['시간 부족', /시간\s?(부족|추가|경과)|추가\s?시간/],
+      ['사용 중 표시·번호 오류', /사용\s?중|번호|이중\s?결제/],
+      ['동전·카드 인식', /동전|미인식|카드\s?인식/],
+      ['냄새·소음·녹', /냄새|소음|녹|타는/],
+    ] },
+    { name: '키오스크·결제기', tags: ['키오스크오류', '카드리더기오류', '영수증미출력', '동전교환기오류'], guess: /키오스크|카드\s?리더|단말기|동전\s?교환|영수증/, problems: [
+      ['화면 멈춤·터치 안 됨', /화면|터치|먹통|멈|꺼/],
+      ['카드 인식 안 됨', byTag(['카드리더기오류'], /카드|단말기|리더기/)],
+      ['동전 교환·현금', byTag(['동전교환기오류'], /동전|교환|지폐|현금/)],
+      ['결제·충전 오류', /결제|충전|이중|중복/],
+      ['영수증 미출력', byTag(['영수증미출력'], /영수증|출력/)],
+    ] },
+    { name: '자판기', tags: ['자판기오류'], guess: /자판기/, problems: [
+      ['상품이 안 나옴', /미배출|안\s?나|나오지|배출/],
+      ['돈·카드를 먹음', /먹|투입.{0,4}(안|오류)|미인식|결제/],
+      ['재고 없음', /재고|품절/],
+    ] },
+    { name: '이불함', tags: ['이불함'], guess: /이불함/, problems: [
+      ['문이 안 열림', /(문|함)[이가]?\s?(안\s?열|열리지)/],
+      ['세탁물 미수령', /미수령|안\s?나|못\s?찾/],
+      ['결제 오류', /결제/],
+    ] },
+    { name: '앱', tags: ['기기오작동문의_앱'], guess: /앱|어플/, problems: [
+      ['로그인·인증', /로그인|인증/], ['결제·충전', /결제|충전/], ['화면·기능 오류', /오류|안\s?됨|안\s?돼/],
+    ] },
+  ],
+  세탁: [
+    { name: '세탁 품질', items: true, tags: ['오염미제거', '오염발생', '변형_변색_손상', '다림질미흡', '건조_냄새', '보풀_이물질_먼지', '세탁_수선문의_재케어', '세탁_수선문의_재세탁'], guess: /오염|얼룩|손상|변색|재세탁|재케어|냄새|다림/, problems: [
+      ['오염이 안 지워짐', byTag(['오염미제거'], /미제거|안\s?지워|제거되지|지워지지/)],
+      ['손상·변형·변색', byTag(['변형_변색_손상'], /손상|찢|늘어|줄어|변형|변색|탈색|올풀|터짐/)],
+      ['세탁 중 오염이 생김', byTag(['오염발생'], /이염|오염\s?발생|묻어/)],
+      ['다림질 미흡', byTag(['다림질미흡'], /다림|구김|주름/)],
+      ['냄새', byTag(['건조_냄새'], /냄새|악취/)],
+      ['보풀·이물질·먼지', byTag(['보풀_이물질_먼지'], /보풀|이물질|먼지/)],
+    ] },
+    { name: '수선', tags: ['수선', '수선이슈', '수선요청서누락'], guess: /수선|기장|단추|지퍼/, problems: [
+      ['기장·치수가 다름', /기장|길게|짧게|치수|사이즈/],
+      ['일정·지연 문의', /언제|일정|지연|소요|당일/],
+      ['비용 문의', /비용|금액|가격|얼마/],
+      ['동의·반려', /동의|반려|요청서/],
+      ['수선 가능 여부', /가능|불가/],
+    ] },
+    { name: '세탁물 찾기·분실', tags: ['세탁물확인', '분실', '타인세탁물발견_의류회수요청', '소지품', '세탁물수량'], guess: /분실|타인|못\s?찾|미수령|누락/, problems: [
+      ['타인 세탁물·오매칭', /타인|오매칭|오수령|바뀌/],
+      ['일부 누락·미출고', /누락|미출고|미수령|일부|1벌|한\s?벌|안\s?왔/],
+      ['부속품 누락', /부속|모자|벨트|허리끈|버클/],
+      ['접수증·바코드 오류', /접수증|바코드|출력|밀림/],
+      ['분실', byTag(['분실'], /분실|잃어/)],
+      ['소지품', byTag(['소지품'], /소지품|주머니/)],
+    ] },
+    { name: '접수·가격 문의', tags: ['세탁금액', '세탁가능품목', '세탁반려', '세탁불가', '세탁_수선문의'], guess: /가격|금액|반려/, problems: [
+      ['가격·금액', /가격|금액|비용|얼마|차액/],
+      ['세탁 가능 품목', /가능|품목|소재|라벨/],
+      ['세탁 반려·불가', /반려|불가/],
+      ['소요 기간', /언제|기간|소요|일정/],
+    ] },
+    { name: '사고·보상', tags: ['세탁사고안내', '심의'], guess: /사고|보상|심의/, problems: [
+      ['보상 절차', /보상/], ['심의 진행', /심의/], ['브랜드 A/S', /A\/S|AS/],
+    ] },
+  ],
+};
+SUBJECTS.셀프장비 = SUBJECTS.기기오작동;
+const subjectOf = (list, c) => list.find((x) => hasTag(c, ...x.tags)) || list.find((x) => x.guess.test(textOf(c)));
+const passes = (t, c) => (t instanceof RegExp ? t.test(textOf(c)) : t(c));
+
+// 개선 과제 보드: 맨 위에 가장 많은 '대상 · 문제' 3개, 아래에 대상별 문제 막대
+function taskBoard(chats, g) {
+  const list = SUBJECTS[g]; if (!list) return '';
+  const mine = chats.filter((c) => c.groups.includes(g));
+  if (!mine.length) return '';
+  const skBlock = `<div>${sk('40%', 14)}${skLines(4)}</div>`;
+  if (textState[g] !== 'done') { loadGroupText(g); return card('개선 과제', '상담 요약을 불러오는 중이에요', `<div class="task-grid" aria-busy="true">${skBlock.repeat(3)}</div>`, { cls: 'span-3' }); }
+  const groups = new Map(list.map((x) => [x, []]));
+  let unknown = 0;
+  for (const c of mine) { const x = subjectOf(list, c); if (x) groups.get(x).push(c); else unknown++; }
+  const OTHER = '그 외';
+  const blocks = [...groups].filter(([, cs]) => cs.length).sort((a, b) => b[1].length - a[1].length).map(([x, cs]) => {
+    const probs = x.problems.map(([label, t]) => [label, cs.filter((c) => passes(t, c)).length]).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const isOther = (c) => textOf(c) && !x.problems.some(([, t]) => passes(t, c));
+    const otherN = cs.filter(isOther).length;
+    const tip = (k) => {
+      const t = k === OTHER ? null : x.problems.find(([l]) => l === k)[1];
+      const ex = cs.filter((c) => (t ? passes(t, c) : isOther(c))).slice(0, 2).map((c) => textOf(c).split(' / ')[0]);
+      return `<span class="tip ins-tip" role="tooltip"><span class="tip-title">${esc(x.name)} · ${esc(k)}</span>${ex.map((e) => `<span class="tip-ex">${esc(e)}</span>`).join('')}</span>`;
+    };
+    const items = x.items ? ITEMS.map(([l, re]) => [l, cs.filter((c) => re.test(textOf(c))).length]).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 4) : [];
+    return { x, cs, probs, otherN, tip, items };
+  });
+  const top = blocks.flatMap((b) => b.probs.map(([l, v]) => ({ who: b.x.name, l, v }))).sort((a, b) => b.v - a.v).slice(0, 3);
+  const total = mine.length;
+  const bars = (b) => (b.probs.length || b.otherN
+    ? hbars(b.otherN ? [...b.probs, [OTHER, b.otherN]] : b.probs, { top: Math.max(1, ...b.probs.map(([, v]) => v)), tip: b.tip, dim: (k) => k === OTHER, color: (k) => (k === OTHER ? 'var(--soft)' : 'var(--ink)') })
+    : '<p class="muted">요약이 아직 없어요.</p>');
+  return card('개선 과제', `${esc(groupLabel(g))} 상담 ${n(total)}건을 대상별로 나눠, 많이 나온 문제를 모았어요. 막대에 마우스를 올리면 예시가 보여요`, `
+    ${top.length ? `<ol class="task-top">${top.map((t) => `<li><span class="task-who">${esc(t.who)}</span><b>${esc(t.l)}</b><span class="task-n">${n(t.v)}건</span></li>`).join('')}</ol>` : ''}
+    <div class="task-grid">${blocks.map((b) => `<div class="task-block">
+      <div class="task-head"><h3>${esc(b.x.name)}</h3><span>${n(b.cs.length)}건 · ${Math.round((b.cs.length / total) * 100)}%</span></div>
+      ${bars(b)}
+      ${b.items.length ? `<p class="task-items">많이 나온 품목 ${b.items.map(([l, v]) => `<span>${esc(l)} ${n(v)}</span>`).join('')}</p>` : ''}
+    </div>`).join('')}</div>
+    ${unknown ? `<p class="task-note">어떤 대상인지 알 수 없는 상담 ${n(unknown)}건은 빠져 있어요.</p>` : ''}`, { cls: 'span-3' });
 }
 
 function bindCommon(root) {
@@ -1013,6 +1150,7 @@ function renderDetail() {
         `${V === 'type' ? stackedTrend(base, { keyFn: () => ['x'], color: () => 'var(--ink)', label: () => title, actPeriods })
           : stackedTrend(base, { keyFn: subKey, color: subColor, label: subLabel, keys: subEntries.map(([k]) => k) })}
          ${V === 'type' ? actionsBlock(base, acts) : ''}`, { cls: 'span-3' })}
+      ${V === 'group' || V === 'type' ? taskBoard(ranged, V === 'group' ? K : groupOf(K)) : ''}
       ${subEntries.length ? card(V === 'group' ? '세부 유형' : '유형 묶음', V === 'group' ? '누르면 그 유형만 자세히 볼 수 있어요' : '',
         donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group', count: ranged.length }), { cls: 'span-2' }) : ''}
       ${V === 'store' ? card('이 매장의 세부 유형', '누르면 아래 목록을 거를 수 있어요',
@@ -1020,7 +1158,7 @@ function renderDetail() {
       ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
       ${storeCard}
       ${card('시간대별 상담', '진할수록 많아요', heatmap(ranged))}
-      ${V === 'group' || V === 'type' ? insightCard(ranged, V === 'group' ? K : groupOf(K)) : insightCard(ranged, MAL_GROUP, '기기 오작동 증상과 처리')}
+      ${V === 'group' || V === 'type' ? insightCard(ranged, V === 'group' ? K : groupOf(K), '', { resOnly: !!SUBJECTS[V === 'group' ? K : groupOf(K)] }) : insightCard(ranged, MAL_GROUP, '기기 오작동 증상과 처리')}
     </div>
 
     <section class="card list-card" id="list">
