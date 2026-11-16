@@ -163,6 +163,11 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .st-bar i { display: block; border-radius: 4px; min-height: 2px; }
 .st-col.cur .st-bar { opacity: .45; }
 .st-l { font-size: 11px; color: var(--mid); white-space: nowrap; }
+/* 칸이 많을 때(시간별 24칸 등) 한 화면에 들어가게 */
+.stack-trend.dense { gap: 3px; }
+.stack-trend.dense .st-col { flex: 1 1 0; min-width: 0; }
+.stack-trend.dense .st-bar { width: 72%; }
+.stack-trend.dense .st-v, .stack-trend.dense .st-l { font-size: 10px; letter-spacing: -0.02em; }
 .st-flag { color: var(--up); margin-left: 2px; font-weight: 400; }
 
 /* 시간대 히트맵: 회색 농도 */

@@ -232,7 +232,7 @@ function rangeSpan(r = S.range) {
   if (r === 'tm') return [kstMidnight(today.slice(0, 8) + '01'), tomorrow];
   if (r === 'lm') { const first = kstMidnight(today.slice(0, 8) + '01'); return [kstMidnight(kymd(first - 1).slice(0, 8) + '01'), first]; }
   if (r.includes('~')) { const [a, b] = r.split('~'); return [kstMidnight(a), kstMidnight(b) + 86_400_000]; }
-  return [now - Number(r) * 86_400_000, tomorrow];
+  return [tomorrow - Number(r) * 86_400_000, tomorrow]; // 최근 N일 = 오늘 포함 N일
 }
 const dotDate = (d) => d.replaceAll('-', '.');
 function rangeLabel(r = S.range) {
@@ -240,10 +240,11 @@ function rangeLabel(r = S.range) {
   const [a, b] = r.split('~'); return a === b ? dotDate(a) : `${dotDate(a)} – ${dotDate(b)}`;
 }
 // 추이 단위: 짧으면 주, 3개월 안팎이면 보름, 길면 월
+const PRESET_UNIT = { 7: 'day', 30: 'week', tm: 'week', lm: 'week', 90: 'half', 180: 'month', 365: 'month', all: 'month' };
 function unitOf(r = S.range) {
-  if (r === 'all') return 'month';
-  const [f, t] = rangeSpan(r), days = (t - f) / 86_400_000;
-  return days <= 45 ? 'week' : days <= 100 ? 'half' : 'month';
+  if (PRESET_UNIT[r]) return PRESET_UNIT[r];
+  const [f, t] = rangeSpan(r), days = Math.round((t - f) / 86_400_000); // 직접 설정: 고른 날짜 수
+  return days <= 1 ? 'hour' : days <= 7 ? 'day' : days <= 60 ? 'week' : days <= 180 ? 'half' : 'month';
 }
 const VIEWS = ['group', 'type', 'store', 'all'];
 
@@ -391,7 +392,7 @@ async function loadData() {
     if (!c) {
       const p = kparts(new Date(r.opened_at));
       c = { id: r.chat_id, channel_id: r.channel_id, opened_at: r.opened_at, ms: Date.parse(r.opened_at), store: r.store || NO_STORE,
-        types: [], groups: [], estimated: false, period: periodOfParts(p), month: `${p.y}-${p.m}`, week: mondayOf(p), wd: p.wd, h: p.h };
+        types: [], groups: [], estimated: false, period: periodOfParts(p), month: `${p.y}-${p.m}`, day: dayOfParts(p), hour: hourOfParts(p), week: mondayOf(p), wd: p.wd, h: p.h };
       byId.set(r.chat_id, c);
     }
     const tag = normalizeTag(r.device_type);
@@ -691,11 +692,13 @@ function donut(all, { color, label, onKey, count } = {}) {
 
 // ── 추이 단위: 기간 설정에 따라 주·보름·월로 나눈다
 const DAY_MS = 86_400_000;
-const UNIT_LABEL = { week: '주', half: '보름', month: '월' };
+const UNIT_LABEL = { hour: '시간', day: '일', week: '주', half: '보름', month: '월' };
+const dayOfParts = (p) => `${p.y}-${p.m}-${String(p.d).padStart(2, '0')}`;
+const hourOfParts = (p) => `${dayOfParts(p)} ${String(p.h % 24).padStart(2, '0')}`;
 const ymd = (t) => new Date(t).toISOString().slice(0, 10);
 function mondayOf(p) { return ymd(Date.UTC(+p.y, +p.m - 1, p.d - p.wd)); } // 한국 날짜 기준 그 주의 월요일
-const bucketOf = (c, u) => (u === 'week' ? c.week : u === 'half' ? c.period : c.month);
-const bucketOfDate = (date, u) => { const p = kparts(date); return u === 'week' ? mondayOf(p) : u === 'half' ? periodOfParts(p) : `${p.y}-${p.m}`; };
+const bucketOf = (c, u) => (u === 'hour' ? c.hour : u === 'day' ? c.day : u === 'week' ? c.week : u === 'half' ? c.period : c.month);
+const bucketOfDate = (date, u) => { const p = kparts(date); return u === 'hour' ? hourOfParts(p) : u === 'day' ? dayOfParts(p) : u === 'week' ? mondayOf(p) : u === 'half' ? periodOfParts(p) : `${p.y}-${p.m}`; };
 function monthsBetween(a, b) {
   const out = []; let [y, m] = a.split('-').map(Number);
   for (let k = a; k <= b; ) { out.push(k); m++; if (m > 12) { m = 1; y++; } k = `${y}-${String(m).padStart(2, '0')}`; }
@@ -705,6 +708,17 @@ function buckets() {
   const u = unitOf(), [f, t] = rangeSpan(), now = new Date();
   const end = new Date(Math.min(t - 1, now.getTime())), start = new Date(Math.max(f, 0));
   const live = bucketOfDate(end, u) === bucketOfDate(now, u); // 마지막 칸이 아직 진행 중인지
+  const md = (k) => `${+k.slice(5, 7)}/${+k.slice(8, 10)}`;
+  if (u === 'hour') {
+    const keys = [];
+    for (let ms = Math.max(f, 0); ms < Math.min(t, now.getTime() + 1); ms += 3_600_000) keys.push(bucketOfDate(new Date(ms), 'hour'));
+    return { u, keys, live, label: (k) => `${+k.slice(11)}시`, long: (k) => `${+k.slice(5, 7)}월 ${+k.slice(8, 10)}일 ${+k.slice(11)}시` };
+  }
+  if (u === 'day') {
+    const keys = [];
+    for (let k = bucketOfDate(start, 'day'), last = bucketOfDate(end, 'day'); k <= last; k = ymd(Date.parse(k) + DAY_MS)) keys.push(k);
+    return { u, keys, live, label: md, long: (k) => `${+k.slice(5, 7)}월 ${+k.slice(8)}일` };
+  }
   if (u === 'week') {
     const keys = [];
     for (let k = bucketOfDate(start, 'week'), last = bucketOfDate(end, 'week'); k <= last; k = ymd(Date.parse(k) + 7 * DAY_MS)) keys.push(k);
@@ -728,7 +742,7 @@ function buckets() {
 // 기간별 누적 막대: 유형 묶음(또는 세부 유형)별 흑백 단계
 function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, label = groupLabel, actPeriods = new Set(), keys } = {}) {
   const B = buckets(), P = B.keys, cur = B.live ? P.at(-1) : null;
-  chats = chats.filter((c) => P.includes(bucketOf(c, B.u)));
+  chats = chats.filter((c) => P.includes(bucketOf(c, B.u)) && (!S.range.includes("~") || inRange(c))); // 직접 정한 기간은 그 날짜 안의 상담만
   const all = keys || Object.keys(countBy(chats, keyFn));
   const order = all.length > 6 ? [...all.slice(0, 5), OTHER] : all;
   const top = new Set(order);
@@ -738,7 +752,7 @@ function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, labe
   const tot = (p) => chats.filter((c) => bucketOf(c, B.u) === p).length;
   const sums = P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0));
   const sc = barScale(sums, B.live ? [P.length - 1] : []); // 진행 중인 칸은 기준에서 뺀다
-  return `<div class="stack-trend">${P.map((p) => {
+  return `<div class="stack-trend ${P.length > 14 ? 'dense' : ''}">${P.map((p) => {
     const sum = Object.values(per[p]).reduce((s, v) => s + v, 0);
     return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${B.long(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
       <span class="st-v">${n(tot(p))}</span>
