@@ -125,7 +125,8 @@ const INSIGHTS = {
       ['세탁물 오염·이물질', /오염|이물질|얼룩/],
       ['탈수·건조 미흡', /탈수\s?(미흡|안|불량|부족)|재탈수|덜\s?마|미건조|건조\s?(가\s?)?(안|덜|불량|미흡)|젖|배기/],
       ['이전 사용자 세탁물', /방치|미수거|이전 이용자/],
-      ['투입구·문', /투입구|문이|열리지|닫혀/],
+      ['꺼내거나 넣기 전에 문이 닫힘', /(투입구|문)[이가]?\s?(먼저\s?)?(닫혀|닫혔|닫힘|닫혀버)|못\s?(꺼내|넣|집)[^.]{0,20}닫|회수\s?(를\s?)?못|나오기\s?전에/],
+      ['기기 문이 안 열림', /(세탁기|건조기|기기|투입구|^)\s?문이?\s?(안\s?열|열리지|안열)|문이\s?안\s?열/],
       ['쿠폰·이벤트', /쿠폰|이벤트/],
       ['접수증 누락', /접수증/],
       ['매장 시설', /출입문|봉투|화장실|조명|청소|카트/],
@@ -785,7 +786,7 @@ function insightCard(chats, g, title) {
   if (!mine.length) return '';
   title = title || R.title;
   if (textState[g] !== 'done') { loadGroupText(g); return card(title, '상담 요약을 불러오는 중이에요', `<div class="stacked" aria-busy="true"><div>${sk('40px', 12)}${skLines(5)}</div><div>${sk('40px', 12)}${skLines(4)}</div></div>`); }
-  const issues = tally(R.issues, mine).slice(0, 6), res = tallyFirst(R.res, mine).sort((a, b) => b[1] - a[1]);
+  const issues = tally(R.issues, mine).slice(0, 8), res = tallyFirst(R.res, mine).sort((a, b) => b[1] - a[1]);
   return card(title, `${esc(groupLabel(g).replace(/ 상담$/, ""))} 상담 ${n(mine.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
       <div><h3>${R.a}</h3>${issues.length ? hbars(issues) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
