@@ -84,7 +84,32 @@ const S = {
   email: '', approver: false, chats: [], actions: [], sync: null, periods: [], parents: new Set(), groupShade: {}, groupOrder: [],
   view: 'home', key: '', animateNext: false, revealFrom: null, range: '90', period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false,
 };
-const RANGES = { 30: '최근 1개월', 90: '최근 3개월', 180: '최근 6개월', 365: '최근 1년', all: '전체 기간' };
+const RANGES = { 7: '최근 7일', 30: '최근 1개월', 90: '최근 3개월', 180: '최근 6개월', 365: '최근 1년', tm: '이번 달', lm: '지난 달', all: '전체 기간' };
+const PRESET_ORDER = ['7', '30', '90', '180', '365', 'tm', 'lm', 'all'];
+const KST_MS = 9 * 3600_000;
+const kymd = (ms) => new Date(ms + KST_MS).toISOString().slice(0, 10); // 한국 날짜 'YYYY-MM-DD'
+const kstMidnight = (d) => Date.parse(`${d}T00:00:00+09:00`);
+const validRange = (r) => !!RANGES[r] || /^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/.test(r || '');
+// 기간 → [시작, 끝) 시각(ms)
+function rangeSpan(r = S.range) {
+  const now = Date.now(), today = kymd(now), tomorrow = kstMidnight(today) + 86_400_000;
+  if (r === 'all') return [0, tomorrow];
+  if (r === 'tm') return [kstMidnight(today.slice(0, 8) + '01'), tomorrow];
+  if (r === 'lm') { const first = kstMidnight(today.slice(0, 8) + '01'); return [kstMidnight(kymd(first - 1).slice(0, 8) + '01'), first]; }
+  if (r.includes('~')) { const [a, b] = r.split('~'); return [kstMidnight(a), kstMidnight(b) + 86_400_000]; }
+  return [now - Number(r) * 86_400_000, tomorrow];
+}
+const dotDate = (d) => d.replaceAll('-', '.');
+function rangeLabel(r = S.range) {
+  if (RANGES[r]) return RANGES[r];
+  const [a, b] = r.split('~'); return a === b ? dotDate(a) : `${dotDate(a)} – ${dotDate(b)}`;
+}
+// 추이 단위: 짧으면 주, 3개월 안팎이면 보름, 길면 월
+function unitOf(r = S.range) {
+  if (r === 'all') return 'month';
+  const [f, t] = rangeSpan(r), days = (t - f) / 86_400_000;
+  return days <= 45 ? 'week' : days <= 100 ? 'half' : 'month';
+}
 const VIEWS = ['group', 'type', 'store', 'all'];
 
 function readHash() {
@@ -93,7 +118,7 @@ function readHash() {
   const h = new URLSearchParams(hash.slice(1));
   S.view = VIEWS.includes(h.get('v')) ? h.get('v') : 'home';
   S.key = h.get('k') || '';
-  S.range = RANGES[h.get('r')] ? h.get('r') : '90';
+  S.range = validRange(h.get('r')) ? h.get('r') : '90';
   S.period = h.get('p') || ''; S.store = h.get('s') || ''; S.type = h.get('t') || ''; S.q = h.get('q') || '';
 }
 function writeHash() {
@@ -299,7 +324,7 @@ function countBy(list, keyFn) {
   for (const x of list) for (const k of [].concat(keyFn(x))) m[k] = (m[k] || 0) + 1;
   return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]));
 }
-const inRange = (c) => S.range === 'all' || c.ms >= Date.now() - Number(S.range) * 86_400_000;
+const inRange = (c) => { const [f, t] = rangeSpan(); return c.ms >= f && c.ms < t; };
 const isMal = (c) => c.groups.includes(MAL_GROUP);
 const sortGroups = (entries) => entries.sort((a, b) => (a[0] === 'OB유형') - (b[0] === 'OB유형') || b[1] - a[1]);
 function halves() { const P = S.periods; return { cur: P.at(-1), last: P.at(-2), prev: P.at(-3) }; }
@@ -385,21 +410,51 @@ function render() {
 }
 
 // ── 차트와 조각 (흑백)
+const CAL_ICON = '<svg class="cal-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 6.5h12M5.5 1.8v2.6M10.5 1.8v2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 const rangeSelect = () => `<div class="menu-wrap" id="range-wrap">
-  <button type="button" id="range-btn" class="range-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="기간: ${RANGES[S.range]}">${RANGES[S.range]}<span aria-hidden="true">⌄</span></button>
-  <div class="picker menu" id="range-menu" role="listbox" aria-label="기간" hidden>${Object.entries(RANGES).map(([k, v]) =>
-    `<button type="button" class="pk-item ${S.range === k ? 'on' : ''}" role="option" aria-selected="${S.range === k}" data-range="${k}">
-      <span class="pk-label">${v}</span><span></span><span class="pk-check" aria-hidden="true">${S.range === k ? '✓' : ''}</span></button>`).join('')}</div></div>`;
+  <button type="button" id="range-btn" class="range-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="기간: ${esc(rangeLabel())}">${CAL_ICON}${esc(rangeLabel())}<span aria-hidden="true">⌄</span></button>
+  <div class="picker rp" id="range-menu" role="dialog" aria-label="기간 고르기" hidden></div></div>`;
 
-// 기간 메뉴: 열기·닫기·바깥 클릭·키보드
+const WD_SHORT = ['일', '월', '화', '수', '목', '금', '토'];
+const addMonth = (ym, k) => { let [y, m] = ym.split('-').map(Number); m += k; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; };
+const longDate = (d) => (d ? `${d.slice(0, 4)}년 ${+d.slice(5, 7)}월 ${+d.slice(8)}일` : '');
+
+// 기간 선택 창: 왼쪽 프리셋, 오른쪽 두 달 달력. 시작일 → 끝 날짜를 차례로 누르면 바로 적용
 function bindRangeMenu(root) {
   const wrap = root.querySelector('#range-wrap'); if (!wrap) return;
   const btn = wrap.querySelector('#range-btn'), menu = wrap.querySelector('#range-menu');
-  const items = () => [...menu.querySelectorAll('.pk-item')];
+  const today = kymd(Date.now());
+  let a = '', b = '', pick = '', view = '';
+  const monthGrid = (ym) => {
+    const [y, m] = ym.split('-').map(Number), lead = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(), days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    let cells = '<span></span>'.repeat(lead);
+    for (let d = 1; d <= days; d++) {
+      const k = `${ym}-${String(d).padStart(2, '0')}`;
+      const cls = [k === a && 'start', k === b && 'end', a && k > a && k < b && 'mid', k === today && 'today'].filter(Boolean).join(' ');
+      cells += `<button type="button" class="rp-day ${cls}" data-day="${k}" ${k > today ? 'disabled' : ''}>${d}</button>`;
+    }
+    return `<div class="rp-month"><p class="rp-mtitle">${y}년 ${m}월</p><div class="rp-grid">${WD_SHORT.map((w) => `<span class="rp-wd">${w}</span>`).join('')}${cells}</div></div>`;
+  };
+  const draw = () => {
+    const on = RANGES[S.range] ? S.range : 'custom';
+    const preset = (k, label, attr) => `<button type="button" class="rp-preset ${on === k ? 'on' : ''}" ${attr}>${label}<span aria-hidden="true">${on === k ? '✓' : ''}</span></button>`;
+    menu.innerHTML = `<div class="rp-presets">${PRESET_ORDER.map((k) => preset(k, RANGES[k], `data-range="${k}"`)).join('')}${preset('custom', '직접 설정', 'data-custom')}</div>
+      <div class="rp-cal">
+        <div class="rp-fields"><span class="rp-field ${pick ? '' : 'act'}">${longDate(a) || '시작 날짜'}</span><span class="rp-sep">–</span><span class="rp-field ${pick ? 'act' : ''}">${pick ? '끝 날짜' : longDate(b) || '끝 날짜'}</span></div>
+        <div class="rp-months">
+          <button type="button" class="rp-arrow prev" data-move="-1" aria-label="이전 달">‹</button>
+          <button type="button" class="rp-arrow next" data-move="1" aria-label="다음 달" ${view >= today.slice(0, 7) ? 'disabled' : ''}>›</button>
+          ${monthGrid(addMonth(view, -1))}${monthGrid(view)}</div>
+        <p class="rp-hint">${pick ? '끝 날짜를 누르면 바로 적용돼요' : '시작 날짜와 끝 날짜를 차례로 눌러 직접 정할 수 있어요'}</p>
+      </div>`;
+  };
   const outside = (e) => { if (!wrap.contains(e.target)) close(false); };
   const open = () => {
-    menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('is-open');
-    (menu.querySelector('.pk-item.on') || items()[0]).focus({ preventScroll: true });
+    const [f, t] = rangeSpan();
+    a = kymd(S.range === 'all' ? (S.chats.length ? S.chats.at(-1).ms : Date.now()) : f);
+    b = kymd(Math.min(t - 1, Date.now())); pick = ''; view = b.slice(0, 7);
+    draw(); menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('is-open');
+    menu.querySelector('.rp-preset.on')?.focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
   };
   const close = (back = true) => {
@@ -407,19 +462,33 @@ function bindRangeMenu(root) {
     document.removeEventListener('pointerdown', outside);
     if (back) btn.focus({ preventScroll: true });
   };
+  const apply = (r, e) => {
+    close(false); if (unitOf(r) !== unitOf()) S.period = '';
+    S.range = r; S.shown = PAGE; S.animateNext = false; render();
+    if (!e.detail) document.getElementById('range-btn')?.focus({ preventScroll: true });
+  };
   btn.onclick = (e) => (menu.hidden ? open() : close(!e.detail));
   btn.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); open(); } };
   menu.onclick = (e) => {
-    const it = e.target.closest('.pk-item'); if (!it) return;
-    close(false); if (UNIT[it.dataset.range] !== UNIT[S.range]) S.period = ''; S.range = it.dataset.range; S.shown = PAGE; S.animateNext = false; render(); if (!e.detail) document.getElementById('range-btn')?.focus({ preventScroll: true });
+    const p = e.target.closest('[data-range]'); if (p) return apply(p.dataset.range, e);
+    if (e.target.closest('[data-custom]')) { a = b = pick = ''; draw(); menu.querySelector('[data-custom]').focus({ preventScroll: true }); return; }
+    const mv = e.target.closest('[data-move]'); if (mv) { view = addMonth(view, +mv.dataset.move); draw(); menu.querySelector(`[data-move="${mv.dataset.move}"]`)?.focus({ preventScroll: true }); return; }
+    const d = e.target.closest('[data-day]'); if (!d) return;
+    const k = d.dataset.day;
+    if (!pick) { pick = a = b = k; draw(); menu.querySelector(`[data-day="${k}"]`)?.focus({ preventScroll: true }); return; }
+    const [x, y] = pick <= k ? [pick, k] : [k, pick]; pick = '';
+    apply(`${x}~${y}`, e);
   };
-  menu.onkeydown = (e) => {
-    const list = items(), i = list.indexOf(document.activeElement);
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus({ preventScroll: true }); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list.at(-1)).focus({ preventScroll: true }); }
-    else if (e.key === 'Tab') close(false);
+  // 끝 날짜를 고르는 동안 마우스를 올린 날짜까지 미리 칠한다
+  menu.onpointerover = (e) => {
+    const d = pick && e.target.closest('[data-day]'); if (!d) return;
+    const k = d.dataset.day, [x, y] = pick <= k ? [pick, k] : [k, pick];
+    for (const el of menu.querySelectorAll('[data-day]')) {
+      const v = el.dataset.day;
+      el.classList.toggle('start', v === x); el.classList.toggle('end', v === y); el.classList.toggle('mid', v > x && v < y);
+    }
   };
+  menu.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
 }
 const card = (title, sub, body, { cls = '', tools = '' } = {}) => `<section class="card ${cls}">
   <div class="card-head"><div><h2>${title}</h2>${sub ? `<p class="card-sub">${sub}</p>` : ''}</div>${tools}</div>${body}</section>`;
@@ -447,14 +516,13 @@ function barScale(values, exclude = []) {
   const floor = Math.max(0, Math.floor((lo - (max - lo) * 0.5) / 10) * 10); // 가장 낮은 막대가 대략 1/3 높이
   return { h: (v) => (v <= floor ? 4 : 8 + (92 * (v - floor)) / (max - floor)), floor };
 }
-const axisNote = (floor) => (floor ? `<p class="axis-note">차이가 잘 보이도록 막대를 ${n(floor)}건부터 그렸어요</p>` : '');
 
 // 요일별 막대: 가장 많은 요일만 진하게
 function weekdayBars(chats) {
   const m = Array(7).fill(0); for (const c of chats) m[c.wd]++;
   const best = m.indexOf(Math.max(...m)), sc = barScale(m);
   return `<div class="vbars">${m.map((v, i) => `<div class="vbar ${i === best ? 'top' : ''}" title="${WD_LABEL[i]}요일 ${n(v)}건">
-    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${sc.h(v)}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>${axisNote(sc.floor)}`;
+    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${sc.h(v)}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>`;
 }
 
 // 상위 N개만 남기고 나머지는 '그 외'로 합친다
@@ -484,7 +552,6 @@ function donut(all, { color, label, onKey } = {}) {
 
 // ── 추이 단위: 기간 설정에 따라 주·보름·월로 나눈다
 const DAY_MS = 86_400_000;
-const UNIT = { 30: 'week', 90: 'half', 180: 'month', 365: 'month', all: 'month' };
 const UNIT_LABEL = { week: '주', half: '보름', month: '월' };
 const ymd = (t) => new Date(t).toISOString().slice(0, 10);
 function mondayOf(p) { return ymd(Date.UTC(+p.y, +p.m - 1, p.d - p.wd)); } // 한국 날짜 기준 그 주의 월요일
@@ -496,30 +563,32 @@ function monthsBetween(a, b) {
   return out;
 }
 function buckets() {
-  const u = UNIT[S.range], now = new Date();
+  const u = unitOf(), [f, t] = rangeSpan(), now = new Date();
+  const end = new Date(Math.min(t - 1, now.getTime())), start = new Date(Math.max(f, 0));
+  const live = bucketOfDate(end, u) === bucketOfDate(now, u); // 마지막 칸이 아직 진행 중인지
   if (u === 'week') {
-    const cur = bucketOfDate(now, 'week');
-    const keys = Array.from({ length: 5 }, (_, i) => ymd(Date.parse(cur) - (4 - i) * 7 * DAY_MS));
-    return { u, keys, label: (k) => `${+k.slice(5, 7)}/${+k.slice(8)}~`, long: (k) => `${+k.slice(5, 7)}월 ${+k.slice(8)}일부터 한 주` };
+    const keys = [];
+    for (let k = bucketOfDate(start, 'week'), last = bucketOfDate(end, 'week'); k <= last; k = ymd(Date.parse(k) + 7 * DAY_MS)) keys.push(k);
+    return { u, keys, live, label: (k) => `${+k.slice(5, 7)}/${+k.slice(8)}~`, long: (k) => `${+k.slice(5, 7)}월 ${+k.slice(8)}일부터 한 주` };
   }
   if (u === 'half') {
-    const start = periodOf(new Date(now - 90 * DAY_MS));
-    return { u, keys: S.periods.filter((x) => x >= start), label: shortLabel, long: periodLabel };
+    const a = periodOf(start), b = periodOf(end);
+    return { u, keys: S.periods.filter((x) => x >= a && x <= b), live, label: shortLabel, long: periodLabel };
   }
-  const cur = bucketOfDate(now, 'month');
+  const cur = bucketOfDate(end, 'month');
   // 수집을 시작한 날(가장 오래된 상담). 그 달 중간부터 모였으면 그 달은 일부만 있어 낮게 보이므로 뺀다.
   const firstMs = S.chats.length ? S.chats[S.chats.length - 1].ms : now.getTime();
   const fp = kparts(new Date(firstMs)), firstMonth = `${fp.y}-${fp.m}`;
-  let start = S.range === 'all' ? firstMonth : bucketOfDate(new Date(now - Number(S.range) * DAY_MS), 'month');
-  if (start < firstMonth) start = firstMonth;
-  if (start === firstMonth && fp.d > 3 && start < cur) start = monthsBetween(start, cur)[1];
-  const keys = monthsBetween(start, cur);
-  return { u, keys, label: (k) => (k === keys[0] || k.endsWith('-01') ? `${k.slice(2, 4)}년 ${+k.slice(5)}월` : `${+k.slice(5)}월`), long: (k) => `${k.slice(0, 4)}년 ${+k.slice(5)}월` };
+  let from = S.range === 'all' ? firstMonth : bucketOfDate(start, 'month');
+  if (from < firstMonth) from = firstMonth;
+  if (from === firstMonth && fp.d > 3 && from < cur) from = monthsBetween(from, cur)[1];
+  const keys = monthsBetween(from, cur);
+  return { u, keys, live, label: (k) => (k === keys[0] || k.endsWith('-01') ? `${k.slice(2, 4)}년 ${+k.slice(5)}월` : `${+k.slice(5)}월`), long: (k) => `${k.slice(0, 4)}년 ${+k.slice(5)}월` };
 }
 
 // 기간별 누적 막대: 유형 묶음(또는 세부 유형)별 흑백 단계
 function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, label = groupLabel, actPeriods = new Set(), keys } = {}) {
-  const B = buckets(), P = B.keys, cur = P.at(-1);
+  const B = buckets(), P = B.keys, cur = B.live ? P.at(-1) : null;
   chats = chats.filter((c) => P.includes(bucketOf(c, B.u)));
   const all = keys || Object.keys(countBy(chats, keyFn));
   const order = all.length > 6 ? [...all.slice(0, 5), OTHER] : all;
@@ -529,7 +598,7 @@ function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, labe
   const per = Object.fromEntries(P.map((p) => [p, countBy(chats.filter((c) => bucketOf(c, B.u) === p), kf)]));
   const tot = (p) => chats.filter((c) => bucketOf(c, B.u) === p).length;
   const sums = P.map((p) => Object.values(per[p]).reduce((s, v) => s + v, 0));
-  const sc = barScale(sums, [P.length - 1]); // 진행 중인 칸은 기준에서 뺀다
+  const sc = barScale(sums, B.live ? [P.length - 1] : []); // 진행 중인 칸은 기준에서 뺀다
   return `<div class="stack-trend">${P.map((p) => {
     const sum = Object.values(per[p]).reduce((s, v) => s + v, 0);
     return `<button class="st-col ${p === cur ? 'cur' : ''} ${S.period === p ? 'on' : ''}" data-period="${p}" title="${B.long(p)}${p === cur ? ' (진행 중)' : ''}: ${tot(p)}건">
@@ -537,7 +606,7 @@ function stackedTrend(chats, { keyFn = (c) => c.groups, color = groupColor, labe
       <span class="st-bar" style="height:${sc.h(sum)}%">${order.filter((k) => per[p][k]).map((k) =>
         `<i style="flex:${per[p][k]};background:${color(k)}" title="${esc(label(k))} ${per[p][k]}건"></i>`).join('')}</span>
       <span class="st-l">${B.label(p)}${actPeriods.has(p) ? '<b class="st-flag" aria-label="개선 조치">●</b>' : ''}</span></button>`;
-  }).join('')}</div>${axisNote(sc.floor)}`;
+  }).join('')}</div>`;
 }
 
 function heatmap(chats) {
@@ -689,7 +758,7 @@ function renderHome() {
   const cmp = (a, b, note) => tipBox(last, prev, a, b, note);
   const roseType = rose && ((c) => c.types.includes(rose[0]));
   view.innerHTML = `
-    ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${RANGES[S.range]} ${n(ranged.length)}건`)}
+    ${pageHead('대시보드', `${periodLabel(cur)} 기준 · ${rangeLabel()} ${n(ranged.length)}건`)}
     <section class="kpis">
       <div class="kpi"><p>이번 보름 상담</p><b>${n(curN)}</b><span class="delta flat">진행 중</span><span class="kpi-note">${periodLabel(cur)}</span></div>
       <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN, { tip: cmp(lastN, prevN) })}<span class="kpi-note">그 전 보름 대비</span></div>
@@ -697,14 +766,14 @@ function renderHome() {
         ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '모든 세부 유형 중 가장 많이 늘었어요') }) : '<span class="delta-slot"></span>'}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
       <div class="kpi kpi-focus" id="focus-kpi">
         <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false" title="눌러서 지켜볼 유형을 바꿀 수 있어요">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
-        <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `위의 ${focusShare}%는 ${RANGES[S.range]} 전체 상담 중 비중이에요`) })}
-        <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span>${focusPicker(focus, ranged)}</div>
+        <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `위의 ${focusShare}%는 ${rangeLabel()} 전체 상담 중 비중이에요`) })}
+        <span class="kpi-note">${rangeLabel()} ${n(focusN)}건 · 전체 상담 중 비중</span>${focusPicker(focus, ranged)}</div>
     </section>
 
     <div class="cards">
-      ${card('유형 묶음 비중', `${RANGES[S.range]} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group' }), { cls: 'span-2' })}
-      ${card('요일별 상담', RANGES[S.range], weekdayBars(ranged))}
-      ${card(`${UNIT_LABEL[UNIT[S.range]]}별 상담`, `${RANGES[S.range]} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
+      ${card('유형 묶음 비중', `${rangeLabel()} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group' }), { cls: 'span-2' })}
+      ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
+      ${card(`${UNIT_LABEL[unitOf()]}별 상담`, `${rangeLabel()} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
       ${card('매장 TOP 8', '상담이 많은 매장이에요. 막대는 유형 묶음 구성이에요', `<ul class="stores">${storeEntries.map(([s, v]) => {
         const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
         return `<li><button class="store-row" data-store="${esc(s)}"><span class="hbar-label">${esc(s)}</span>
@@ -737,10 +806,10 @@ function renderDetail() {
   const allRanged = S.chats.filter(inRange).length;
 
   const acts = V === 'type' ? S.actions.filter((a) => a.device_type === K).sort((a, b) => (a.acted_on < b.acted_on ? -1 : 1)) : [];
-  const actPeriods = new Set(acts.map((a) => bucketOfDate(new Date(a.acted_on), UNIT[S.range])));
+  const actPeriods = new Set(acts.map((a) => bucketOfDate(new Date(a.acted_on), unitOf())));
 
   const q = S.q.trim();
-  const listed = (S.period ? base.filter((c) => bucketOf(c, UNIT[S.range]) === S.period) : ranged)
+  const listed = (S.period ? base.filter((c) => bucketOf(c, unitOf()) === S.period) : ranged)
     .filter((c) => (!S.store || c.store === S.store) && (!S.type || c.types.includes(S.type))
       && (!q || c.store.includes(q) || (SEARCH.q === q && SEARCH.ids?.has(c.id))));
 
@@ -761,14 +830,14 @@ function renderDetail() {
   view.innerHTML = `
     ${pageHead(esc(title), V === 'type' ? esc(K) : '', { crumb })}
     <section class="kpis">
-      ${kpi(RANGES[S.range], n(ranged.length), '', V !== 'all' ? `전체 상담의 ${Math.round((ranged.length / Math.max(1, allRanged)) * 100)}%` : '')}
+      ${kpi(rangeLabel(), n(ranged.length), '', V !== 'all' ? `전체 상담의 ${Math.round((ranged.length / Math.max(1, allRanged)) * 100)}%` : '')}
       ${kpi('지난 보름', n(cntP(last)), delta(cntP(last), cntP(prev), { tip: tipBox(last, prev, cntP(last), cntP(prev)) }), periodLabel(last))}
       ${kpi('이번 보름', n(cntP(cur)), '', `${periodLabel(cur)}, 진행 중`)}
       ${kpi('상담이 많은 매장', st.find(([s]) => s !== NO_STORE) ? `<span class="kpi-text">${esc(st.find(([s]) => s !== NO_STORE)[0])}</span>` : '-', '', st.find(([s]) => s !== NO_STORE) ? `${n(st.find(([s]) => s !== NO_STORE)[1])}건` : '')}
     </section>
 
     <div class="cards">
-      ${card(`${UNIT_LABEL[UNIT[S.range]]}별 추이`, `막대를 누르면 그 ${UNIT_LABEL[UNIT[S.range]]}의 상담만 아래에 보여요. 흐린 막대는 아직 진행 중이에요.${actPeriods.size ? ` 점은 개선 조치를 한 ${UNIT_LABEL[UNIT[S.range]]}이에요.` : ''}`,
+      ${card(`${UNIT_LABEL[unitOf()]}별 추이`, `막대를 누르면 그 ${UNIT_LABEL[unitOf()]}의 상담만 아래에 보여요. 흐린 막대는 아직 진행 중이에요.${actPeriods.size ? ` 점은 개선 조치를 한 ${UNIT_LABEL[unitOf()]}이에요.` : ''}`,
         `${V === 'type' ? stackedTrend(base, { keyFn: () => ['x'], color: () => 'var(--ink)', label: () => title, actPeriods })
           : stackedTrend(base, { keyFn: subKey, color: subColor, label: subLabel, keys: subEntries.map(([k]) => k) })}
          ${V === 'type' ? actionsBlock(base, acts) : ''}`, { cls: 'span-3' })}
@@ -776,7 +845,7 @@ function renderDetail() {
         donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group' }), { cls: 'span-2' }) : ''}
       ${V === 'store' ? card('이 매장의 세부 유형', '누르면 아래 목록을 거를 수 있어요',
         hbars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 10), { onKey: 'filter-type', color: (k) => groupColor(groupOf(k)), label: tagLabel, dim: isParent, title: (k) => k })) : ''}
-      ${card('요일별 상담', RANGES[S.range], weekdayBars(ranged))}
+      ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
       ${storeCard}
       ${card('시간대별 상담', '진할수록 많아요', heatmap(ranged))}
       ${malCard(ranged, V === 'group' && K === MAL_GROUP || V === 'type' && groupOf(K) === MAL_GROUP ? '증상과 처리' : '기기 오작동 증상과 처리')}
