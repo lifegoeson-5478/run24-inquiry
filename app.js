@@ -1183,6 +1183,45 @@ function bindFocusPicker(view) {
   };
 }
 
+
+// 대시보드: 모든 묶음을 통틀어 가장 시급한 개선 과제 (기간 안 건수 순, 지난 보름에 급증하면 표시)
+const URGENT_GROUPS = ['기기오작동', '세탁', '매장이용', '수거', '결제', '주차등록', '기타', 'OB유형'];
+function urgentTasks(ranged) {
+  const groups = URGENT_GROUPS.filter((g) => ranged.some((c) => c.groups.includes(g)));
+  const waiting = groups.filter((g) => textState[g] !== 'done');
+  const head = ['가장 시급한 개선 과제', `${rangeLabel()} 모든 유형 묶음에서 많이 나온 '대상 · 문제'예요. 누르면 그 묶음을 자세히 볼 수 있어요`];
+  if (waiting.length) { waiting.forEach(loadGroupText); return card(...head, `<div aria-busy="true">${skLines(5)}</div>`, { cls: 'span-3' }); }
+  const { last, prev } = halves();
+  const rows = [];
+  for (const g of groups) {
+    const list = SUBJECTS[g];
+    const inG = (cs) => cs.filter((c) => c.groups.includes(g));
+    const mine = inG(ranged), lastCs = inG(S.chats.filter((c) => c.period === last)), prevCs = inG(S.chats.filter((c) => c.period === prev));
+    for (const x of list) {
+      const own = (cs) => cs.filter((c) => subjectOf(list, c) === x);
+      const a = own(mine), l = own(lastCs), p = own(prevCs);
+      if (!a.length) continue;
+      for (const [label, t] of x.problems) {
+        const v = a.filter((c) => passes(t, c)).length;
+        if (v) rows.push({ g, who: x.name, label, v, l: l.filter((c) => passes(t, c)).length, p: p.filter((c) => passes(t, c)).length });
+      }
+    }
+  }
+  rows.sort((a, b) => b.v - a.v);
+  const top = rows.slice(0, 6);
+  if (!top.length) return '';
+  const max = top[0].v;
+  return card(...head, `<ol class="urgent">${top.map((r) => {
+    const surge = r.l >= 10 && r.l >= r.p * 1.3; // 지난 보름에 30% 넘게 늘면 급증
+    return `<li><button class="urgent-row" data-group="${esc(r.g)}">
+      <span class="urgent-who">${esc(groupLabel(r.g))} · ${esc(r.who)}</span>
+      <b class="urgent-what">${esc(r.label)}${surge ? '<span class="urgent-flag">급증</span>' : ''}</b>
+      <span class="urgent-bar"><span style="width:${(r.v / max) * 100}%"></span></span>
+      <span class="urgent-n">${n(r.v)}건</span>
+    </button>${delta(r.l, r.p, { tip: tipBox(last, prev, r.l, r.p, `${groupLabel(r.g)} · ${r.who} · ${r.label}`) })}</li>`;
+  }).join('')}</ol>`, { cls: 'span-3' });
+}
+
 // ── 대시보드 (첫 화면)
 function renderHome() {
   const view = document.getElementById('view');
@@ -1217,6 +1256,7 @@ function renderHome() {
     </section>
 
     <div class="cards">
+      ${urgentTasks(ranged)}
       ${card('유형 묶음 비중', `${rangeLabel()} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group', count: ranged.length }), { cls: 'span-2' })}
       ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
       ${card(`${UNIT_LABEL[unitOf()]}별 상담`, `${rangeLabel()} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}

@@ -425,3 +425,24 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .task-items { margin: 8px 0 0; font-size: 12px; color: var(--mid); display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .task-items span { color: var(--ink); }
 .task-note { margin: 14px 0 0; font-size: 12px; color: var(--soft); }
+
+/* 대시보드: 가장 시급한 개선 과제 */
+.urgent { list-style: none; padding: 0; margin: 0; counter-reset: urgent; }
+.urgent li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--line); }
+.urgent li:first-child { border-top: 0; }
+.urgent-row { counter-increment: urgent; display: grid; grid-template-columns: 30px minmax(0, 1.3fr) minmax(60px, 1fr) 56px; grid-template-areas: "rank who bar n" "rank what bar n";
+  align-items: center; column-gap: 14px; width: 100%; border: 0; background: none; text-align: left; padding: 10px 8px; border-radius: 10px; cursor: pointer; font: inherit; color: var(--ink); }
+.urgent-row:hover, .urgent-row:focus-visible { background: var(--tint); outline: none; }
+.urgent-row::before { content: counter(urgent); grid-area: rank; font-size: 20px; font-weight: 700; text-align: center; }
+.urgent li:nth-child(n+4) .urgent-row::before { color: var(--soft); font-weight: 600; }
+.urgent-who { grid-area: who; font-size: 12px; color: var(--mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.urgent-what { grid-area: what; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.urgent-flag { margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--up); background: var(--up-bg); border-radius: 6px; padding: 1px 6px; vertical-align: 2px; }
+.urgent-bar { grid-area: bar; height: 8px; background: var(--tint); border-radius: 4px; overflow: hidden; }
+.urgent-bar span { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
+.urgent-n { grid-area: n; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { .urgent-row { grid-template-columns: 24px minmax(0, 1fr) 48px; grid-template-areas: "rank who n" "rank what n"; } .urgent-bar { display: none; } }
+.urgent li > .delta { align-self: center; margin-right: 4px; }
+.urgent .tip { left: auto; right: -4px; } /* 오른쪽 끝이라 왼쪽으로 펼친다 */
+.urgent .tip::before { left: auto; right: 14px; }
+.main { overflow-x: clip; } /* 숨어 있는 말풍선이 가로 스크롤을 만들지 않게 */
