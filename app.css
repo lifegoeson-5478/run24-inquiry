@@ -390,3 +390,4 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .tip-diff { color: var(--card); border-top: 1px solid color-mix(in srgb, var(--card) 22%, transparent); padding-top: 6px; }
 .tip-note { color: color-mix(in srgb, var(--card) 55%, var(--ink)); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+.form-msg { margin: 10px 0 0; font-size: 13px; color: var(--up); }

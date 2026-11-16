@@ -121,6 +121,7 @@ function readHash() {
   S.range = validRange(h.get('r')) ? h.get('r') : '90';
   S.period = h.get('p') || ''; S.store = h.get('s') || ''; S.type = h.get('t') || ''; S.q = h.get('q') || '';
 }
+addEventListener('popstate', () => { if (!S.email) return; readHash(); S.shown = PAGE; S.animateNext = true; render(); });
 function writeHash() {
   const h = new URLSearchParams();
   if (S.view !== 'home') h.set('v', S.view);
@@ -280,7 +281,8 @@ async function loadData() {
 
 // ── 요약 문장: 화면에 보이는 상담만 받아 둔다. 오작동 증상 분석용 요약은 첫 화면 뒤에 한 번에 받는다.
 const TEXT = new Map(); // chat_id → { summary, first_message }
-const textOf = (c) => { const t = TEXT.get(c.id); return t ? t.summary || t.first_message || '' : ''; };
+const hideNumbers = (t) => t.replace(/\d{3,}(?:-\d{2,}| \d{3,})*/g, (m) => (m.replace(/\D/g, '').length >= 10 ? '***' : m)); // 카드·계좌번호 (띄어쓰기·하이픈이 섞여도)
+const textOf = (c) => { const t = TEXT.get(c.id); return t ? hideNumbers(t.summary || t.first_message || '') : ''; };
 async function ensureText(chats) {
   const need = [...new Set(chats.filter((c) => !TEXT.has(c.id)).map((c) => c.id))];
   if (!need.length) return false;
@@ -385,7 +387,9 @@ function afterEntrance(fn) {
   if (v?.classList.contains('enter')) setTimeout(() => afterEntrance(fn), 200); else fn();
 }
 
+// 화면을 옮길 때는 기록을 하나 남긴다 (뒤로 가기로 이전 화면에 돌아오도록). 필터 변경은 기록을 덮어쓴다.
 function go(view, key = '') {
+  if (S.view !== view || S.key !== key) history.pushState(null, '', location.href);
   Object.assign(S, { view, key, period: '', store: '', type: '', q: '', shown: PAGE, actOpen: false, allStores: false, animateNext: true });
   render(); scrollTo({ top: 0 });
 }
@@ -531,7 +535,7 @@ const topN = (entries, k) => entries.length <= k + 1 ? entries : [...entries.sli
 const withOther = (fn, other) => (k) => (k === OTHER ? other : fn(k));
 
 // 도넛: 조각 사이에 틈을 둔 흑백 도넛
-function donut(all, { color, label, onKey } = {}) {
+function donut(all, { color, label, onKey, count } = {}) {
   const entries = topN(all, 6);
   color = withOther(color, '#E8E8E8'); label = withOther(label, '그 외');
   const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
@@ -544,7 +548,7 @@ function donut(all, { color, label, onKey } = {}) {
   }).join('');
   return `<div class="donut-wrap">
     <svg class="donut" viewBox="0 0 140 140" role="img" aria-label="유형 묶음 비중"><g transform="rotate(-90 70 70)">${arcs}</g>
-      <text x="70" y="77" text-anchor="middle" class="donut-n">${n(total)}<tspan class="donut-l" dx="2">건</tspan></text></svg>
+      <text x="70" y="77" text-anchor="middle" class="donut-n">${n(count ?? total)}<tspan class="donut-l" dx="2">건</tspan></text></svg>
     <ul class="legend">${entries.map(([k, v]) => `<li>${onKey && k !== OTHER ? `<button data-${onKey}="${esc(k)}">` : '<span>'}
       <i style="background:${color(k)}"></i><span class="lg-l">${esc(label(k))}</span><span class="lg-v">${n(v)}</span><span class="lg-p">${Math.round((v / total) * 100)}%</span>
       ${onKey && k !== OTHER ? '</button>' : '</span>'}</li>`).join('')}</ul></div>`;
@@ -771,7 +775,7 @@ function renderHome() {
     </section>
 
     <div class="cards">
-      ${card('유형 묶음 비중', `${rangeLabel()} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group' }), { cls: 'span-2' })}
+      ${card('유형 묶음 비중', `${rangeLabel()} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group', count: ranged.length }), { cls: 'span-2' })}
       ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
       ${card(`${UNIT_LABEL[unitOf()]}별 상담`, `${rangeLabel()} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
       ${card('매장 TOP 8', '상담이 많은 매장이에요. 막대는 유형 묶음 구성이에요', `<ul class="stores">${storeEntries.map(([s, v]) => {
@@ -833,7 +837,13 @@ function renderDetail() {
       ${kpi(rangeLabel(), n(ranged.length), '', V !== 'all' ? `전체 상담의 ${Math.round((ranged.length / Math.max(1, allRanged)) * 100)}%` : '')}
       ${kpi('지난 보름', n(cntP(last)), delta(cntP(last), cntP(prev), { tip: tipBox(last, prev, cntP(last), cntP(prev)) }), periodLabel(last))}
       ${kpi('이번 보름', n(cntP(cur)), '', `${periodLabel(cur)}, 진행 중`)}
-      ${kpi('상담이 많은 매장', st.find(([s]) => s !== NO_STORE) ? `<span class="kpi-text">${esc(st.find(([s]) => s !== NO_STORE)[0])}</span>` : '-', '', st.find(([s]) => s !== NO_STORE) ? `${n(st.find(([s]) => s !== NO_STORE)[1])}건` : '')}
+      ${V === 'store' ? (() => {
+        const [t, v] = Object.entries(countBy(ranged, (c) => c.types))[0] || [];
+        return kpi('가장 많은 유형', t ? `<button class="linkish kpi-text" data-type="${esc(t)}" title="${esc(tagLabel(t))}">${esc(tagLabel(t))}</button>` : '-', '', t ? `${n(v)}건 · ${esc(groupLabel(groupOf(t)))}` : '');
+      })() : (() => {
+        const top = st.find(([s]) => s !== NO_STORE);
+        return kpi('상담이 많은 매장', top ? `<button class="linkish kpi-text" data-store="${esc(top[0])}" title="${esc(top[0])}">${esc(top[0])}</button>` : '-', '', top ? `${n(top[1])}건` : '');
+      })()}
     </section>
 
     <div class="cards">
@@ -842,7 +852,7 @@ function renderDetail() {
           : stackedTrend(base, { keyFn: subKey, color: subColor, label: subLabel, keys: subEntries.map(([k]) => k) })}
          ${V === 'type' ? actionsBlock(base, acts) : ''}`, { cls: 'span-3' })}
       ${subEntries.length ? card(V === 'group' ? '세부 유형' : '유형 묶음', V === 'group' ? '누르면 그 유형만 자세히 볼 수 있어요' : '',
-        donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group' }), { cls: 'span-2' }) : ''}
+        donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group', count: ranged.length }), { cls: 'span-2' }) : ''}
       ${V === 'store' ? card('이 매장의 세부 유형', '누르면 아래 목록을 거를 수 있어요',
         hbars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 10), { onKey: 'filter-type', color: (k) => groupColor(groupOf(k)), label: tagLabel, dim: isParent, title: (k) => k })) : ''}
       ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
@@ -946,16 +956,18 @@ async function admins() {
         <input type="email" name="e" required placeholder="이름@${COMPANY_DOMAIN}" aria-label="추가할 관리자 이메일">
         <button class="btn primary" type="submit">관리자 추가</button>
       </form>
+      <p class="form-msg" id="admin-msg" role="alert" hidden></p>
       <ul class="admins">${rows.map((r) => `<li><span>${esc(r.email)}${r.email === me ? ' <span class="muted">(나)</span>' : ''}</span>
         <span class="muted">${r.added_by ? `${esc(r.added_by.split('@')[0])}님이 ${kst(r.added_at, { month: 'numeric', day: 'numeric' })}에 추가` : '처음 설정'}</span>
         ${r.email === me ? '' : `<button class="linkish" data-rm="${esc(r.email)}">관리자에서 빼기</button>`}</li>`).join('')}</ul>
     </section>`;
   view.querySelector('#admin-form').onsubmit = async (e) => {
     e.preventDefault();
+    const msg = view.querySelector('#admin-msg'), say = (t) => { msg.textContent = t; msg.hidden = false; };
     const email = e.target.e.value.trim().toLowerCase();
-    if (!email.endsWith('@' + COMPANY_DOMAIN)) { alert(`회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있어요.`); return; }
+    if (!email.endsWith('@' + COMPANY_DOMAIN)) return say(`회사 계정(@${COMPANY_DOMAIN})만 등록할 수 있어요.`);
     const { error } = await db.from('approvers').insert({ email });
-    if (error) { alert(error.code === '23505' ? '이미 관리자예요.' : '추가하지 못했어요: ' + error.message); return; }
+    if (error) return say(error.code === '23505' ? '이미 관리자예요.' : '추가하지 못했어요: ' + error.message);
     admins();
   };
   for (const b of view.querySelectorAll('[data-rm]')) b.onclick = async () => {
