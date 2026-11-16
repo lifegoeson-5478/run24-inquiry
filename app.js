@@ -588,6 +588,7 @@ function bindRangeMenu(root) {
       </div>`;
   };
   const outside = (e) => { if (!wrap.contains(e.target)) close(false); };
+  const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }; // 창 안 어디에 포커스가 있어도 ESC로 닫기
   const open = () => {
     const [f, t] = rangeSpan();
     a = kymd(S.range === 'all' ? (S.chats.length ? S.chats.at(-1).ms : Date.now()) : f);
@@ -595,10 +596,11 @@ function bindRangeMenu(root) {
     draw(); menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); wrap.classList.add('is-open');
     menu.querySelector('.rp-preset.on')?.focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outside), 0);
+    document.addEventListener('keydown', esc);
   };
   const close = (back = true) => {
     menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); wrap.classList.remove('is-open');
-    document.removeEventListener('pointerdown', outside);
+    document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', esc);
     if (back) btn.focus({ preventScroll: true });
   };
   const apply = (r, e) => {
@@ -627,7 +629,6 @@ function bindRangeMenu(root) {
       el.classList.toggle('start', v === x); el.classList.toggle('end', v === y); el.classList.toggle('mid', v > x && v < y);
     }
   };
-  menu.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
 }
 const card = (title, sub, body, { cls = '', tools = '' } = {}) => `<section class="card ${cls}">
   <div class="card-head"><div><h2>${title}</h2>${sub ? `<p class="card-sub">${sub}</p>` : ''}</div>${tools}</div>${body}</section>`;

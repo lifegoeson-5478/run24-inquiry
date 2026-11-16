@@ -401,3 +401,5 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .tip-ex::before { content: ""; position: absolute; left: 0; top: .6em; width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .6; }
 .card:has(.has-tip:hover), .card:has(.has-tip:focus-visible) { position: relative; z-index: 26; } /* 말풍선이 아래 카드에 가리지 않게 */
 .tip-ex { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 예시는 한 줄로 */
+.picker[hidden] { display: none !important; } /* display: grid가 hidden을 덮어쓰지 않게 */
+.kpi button.kpi-text { max-width: 100%; text-align: left; } /* 긴 이름은 카드 안에서 … 처리 */
