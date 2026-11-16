@@ -695,8 +695,8 @@ function renderHome() {
       <div class="kpi"><p>지난 보름 상담</p><b>${n(lastN)}</b>${delta(lastN, prevN, { tip: cmp(lastN, prevN) })}<span class="kpi-note">그 전 보름 대비</span></div>
       <div class="kpi"><p>가장 많이 늘어난 유형</p><b class="kpi-text">${rose && rose[1] > 0 ? `<button class="linkish" data-type="${esc(rose[0])}" title="${esc(tagLabel(rose[0]))}">${esc(tagLabel(rose[0]))}</button>` : '-'}</b>
         ${rose && rose[1] > 0 ? delta(rose[1], 0, { words: true, tip: cmp(byP(last).filter(roseType).length, byP(prev).filter(roseType).length, '모든 세부 유형 중 가장 많이 늘었어요') }) : '<span class="delta-slot"></span>'}<span class="kpi-note">${rose ? esc(groupLabel(groupOf(rose[0]))) : ''}</span></div>
-      <div class="kpi kpi-focus" id="focus-kpi" title="눌러서 지켜볼 유형을 바꿀 수 있어요">
-        <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
+      <div class="kpi kpi-focus" id="focus-kpi">
+        <p><button type="button" id="focus-btn" class="focus-btn" aria-haspopup="dialog" aria-expanded="false" title="눌러서 지켜볼 유형을 바꿀 수 있어요">${esc(focusLabel(focus))}<span aria-hidden="true">⌄</span></button></p>
         <b>${focusShare}<small>%</small></b>${delta(focusLast, focusPrev, { tip: cmp(focusLast, focusPrev, `위의 ${focusShare}%는 ${RANGES[S.range]} 전체 상담 중 비중이에요`) })}
         <span class="kpi-note">${RANGES[S.range]} ${n(focusN)}건 · 전체 상담 중 비중</span>${focusPicker(focus, ranged)}</div>
     </section>
