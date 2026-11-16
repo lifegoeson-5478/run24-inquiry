@@ -632,12 +632,11 @@ function bindRangeMenu(root) {
 const card = (title, sub, body, { cls = '', tools = '' } = {}) => `<section class="card ${cls}">
   <div class="card-head"><div><h2>${title}</h2>${sub ? `<p class="card-sub">${sub}</p>` : ''}</div>${tools}</div>${body}</section>`;
 
-function hbars(entries, { onKey, color, label = (k) => k, dim, title, tip } = {}) {
-  const top = Math.max(1, ...entries.map(([, v]) => v));
+function hbars(entries, { onKey, color, label = (k) => k, dim, title, tip, top = Math.max(1, ...entries.map(([, v]) => v)) } = {}) {
   return `<ul class="hbars">${entries.map(([k, v]) => `<li>
     ${onKey ? `<button class="hbar" data-${onKey}="${esc(k)}" ${title ? `title="${esc(title(k))}"` : ''}>` : tip ? '<div class="hbar has-tip" tabindex="0">' : '<div class="hbar">'}
       <span class="hbar-label ${dim && dim(k) ? 'dim' : ''}">${esc(label(k))}</span>
-      <span class="hbar-track"><span style="width:${(v / top) * 100}%;background:${color ? color(k) : 'var(--ink)'}"></span></span>
+      <span class="hbar-track"><span style="width:${Math.min(100, (v / top) * 100)}%;background:${color ? color(k) : 'var(--ink)'}"></span></span>
       <span class="hbar-val">${n(v)}</span>${!onKey && tip ? tip(k, v) : ''}
     ${onKey ? '</button>' : '</div>'}</li>`).join('')}</ul>`;
 }
@@ -792,10 +791,15 @@ function insightCard(chats, g, title) {
     const ex = mine.filter((c) => pick(c, k)).slice(0, 2).map((c) => textOf(c).split(' / ')[0]);
     return `<span class="tip ins-tip" role="tooltip"><span class="tip-title">${esc(k)}</span>${ex.map((t) => `<span class="tip-ex">${esc(t)}</span>`).join('')}</span>`;
   };
-  const issueTip = examples((c, k) => issueRe[k].test(textOf(c)));
+  // 어느 기준에도 안 맞는 상담: 이 막대가 커지면 새로운 불편이 생겼다는 신호 (그때 INSIGHTS에 항목을 추가한다)
+  const OTHER = '그 외 (분류 안 됨)';
+  const isOther = (c) => textOf(c) && !R.issues.some(([, re]) => re.test(textOf(c)));
+  const otherN = mine.filter(isOther).length;
+  if (otherN) issues.push([OTHER, otherN]);
+  const issueTip = examples((c, k) => (k === OTHER ? isOther(c) : issueRe[k].test(textOf(c))));
   return card(title, `${esc(groupLabel(g).replace(/ 상담$/, ""))} 상담 ${n(mine.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
-      <div><h3>${R.a}</h3>${issues.length ? hbars(issues, { tip: issueTip }) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
+      <div><h3>${R.a}</h3>${issues.length ? hbars(issues, { top: Math.max(1, ...issues.filter(([k]) => k !== OTHER).map(([, v]) => v)), tip: issueTip, dim: (k) => k === OTHER, color: (k) => (k === OTHER ? "var(--soft)" : "var(--ink)") }) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
       <div><h3>${R.b}</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
     </div>`);
 }
