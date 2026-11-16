@@ -391,3 +391,12 @@ button.hbar:hover, .store-row:hover { background: var(--tint); }
 .tip-note { color: color-mix(in srgb, var(--card) 55%, var(--ink)); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
 .form-msg { margin: 10px 0 0; font-size: 13px; color: var(--up); }
+
+/* 분류 막대 말풍선: 그 항목의 최근 상담 예시 */
+.has-tip { position: relative; cursor: default; border-radius: 6px; }
+.has-tip:hover, .has-tip:focus-visible { background: var(--tint); outline: none; }
+.has-tip:hover .tip, .has-tip:focus-visible .tip { opacity: 1; visibility: visible; transform: none; transition-delay: .15s; }
+.ins-tip { left: 0; right: 0; width: auto; }
+.tip-ex { padding-left: 10px; position: relative; color: color-mix(in srgb, var(--card) 85%, var(--ink)); }
+.tip-ex::before { content: ""; position: absolute; left: 0; top: .6em; width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .6; }
+.card:has(.has-tip:hover), .card:has(.has-tip:focus-visible) { position: relative; z-index: 26; } /* 말풍선이 아래 카드에 가리지 않게 */
