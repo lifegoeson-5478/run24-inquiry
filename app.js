@@ -787,16 +787,16 @@ function insightCard(chats, g, title) {
   title = title || R.title;
   if (textState[g] !== 'done') { loadGroupText(g); return card(title, '상담 요약을 불러오는 중이에요', `<div class="stacked" aria-busy="true"><div>${sk('40px', 12)}${skLines(5)}</div><div>${sk('40px', 12)}${skLines(4)}</div></div>`); }
   const issues = tally(R.issues, mine).slice(0, 8), res = tallyFirst(R.res, mine).sort((a, b) => b[1] - a[1]);
-  const issueRe = Object.fromEntries(R.issues), firstOf = (c) => R.res.find(([, re]) => re.test(textOf(c)))?.[0];
+  const issueRe = Object.fromEntries(R.issues);
   const examples = (pick) => (k, v) => {
-    const ex = mine.filter((c) => pick(c, k)).slice(0, 3).map((c) => { const t = textOf(c); return t.length > 70 ? t.slice(0, 70) + '…' : t; });
-    return `<span class="tip ins-tip" role="tooltip"><span class="tip-title">${esc(k)}</span>${ex.map((t) => `<span class="tip-ex">${esc(t)}</span>`).join('')}<span class="tip-note">${n(v)}건 중 최근 ${ex.length}건</span></span>`;
+    const ex = mine.filter((c) => pick(c, k)).slice(0, 2).map((c) => textOf(c).split(' / ')[0]);
+    return `<span class="tip ins-tip" role="tooltip"><span class="tip-title">${esc(k)}</span>${ex.map((t) => `<span class="tip-ex">${esc(t)}</span>`).join('')}</span>`;
   };
-  const issueTip = examples((c, k) => issueRe[k].test(textOf(c))), resTip = examples((c, k) => textOf(c) && firstOf(c) === k);
+  const issueTip = examples((c, k) => issueRe[k].test(textOf(c)));
   return card(title, `${esc(groupLabel(g).replace(/ 상담$/, ""))} 상담 ${n(mine.length)}건의 요약에서 찾았어요`, `
     <div class="stacked">
       <div><h3>${R.a}</h3>${issues.length ? hbars(issues, { tip: issueTip }) : '<p class="muted">찾은 내용이 없어요.</p>'}</div>
-      <div><h3>${R.b}</h3>${res.length ? hbars(res, { color: () => 'var(--mid)', tip: resTip }) : ''}</div>
+      <div><h3>${R.b}</h3>${res.length ? hbars(res, { color: () => 'var(--mid)' }) : ''}</div>
     </div>`);
 }
 
