@@ -658,11 +658,27 @@ function barScale(values, exclude = []) {
 }
 
 // 요일별 막대: 가장 많은 요일만 진하게
+// 요일별 하루 평균: 기간 안에서 요일마다 건수를 그 요일이 몇 번 있었는지로 나눈다.
+// 수집 시작 전 날과 아직 진행 중인 오늘은 날짜 수에서 뺀다 (기간이 오늘 하루뿐이면 오늘을 센다).
+function weekdayDays() {
+  const [f, t] = rangeSpan(), today = kstMidnight(kymd(Date.now()));
+  const first = S.chats.length ? kstMidnight(kymd(S.chats[S.chats.length - 1].ms)) : today;
+  const from = kstMidnight(kymd(Math.max(f, first)));
+  let to = Math.min(t, today);
+  if (to <= from) to = from + DAY_MS;
+  const days = Array(7).fill(0);
+  for (let d = from; d < to; d += DAY_MS) days[kparts(new Date(d + 12 * 3600_000)).wd]++;
+  return days;
+}
 function weekdayBars(chats) {
-  const m = Array(7).fill(0); for (const c of chats) m[c.wd]++;
-  const best = m.indexOf(Math.max(...m)), sc = barScale(m);
-  return `<div class="vbars">${m.map((v, i) => `<div class="vbar ${i === best ? 'top' : ''}" title="${WD_LABEL[i]}요일 ${n(v)}건">
-    <span class="vbar-v">${n(v)}</span><span class="vbar-b" style="height:${sc.h(v)}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>`;
+  const m = Array(7).fill(0);
+  for (const c of chats) m[c.wd]++;
+  const days = weekdayDays(), avg = m.map((v, i) => (days[i] ? v / days[i] : 0));
+  const dec = Math.max(...avg) < 20 ? 1 : 0; // 작은 숫자일 때만 소수점 한 자리, 모든 막대가 같은 형식
+  const fmt = (v) => (dec ? v.toFixed(1) : n(Math.round(v)));
+  const best = avg.indexOf(Math.max(...avg)), sc = barScale(avg);
+  return `<div class="vbars">${avg.map((v, i) => `<div class="vbar ${i === best ? 'top' : ''}" title="${WD_LABEL[i]}요일 하루 평균 ${fmt(v)}건 (${n(m[i])}건 ÷ ${days[i]}일)">
+    <span class="vbar-v">${fmt(v)}</span><span class="vbar-b" style="height:${sc.h(v)}%"></span><span class="vbar-l">${WD_LABEL[i]}</span></div>`).join('')}</div>`;
 }
 
 // 상위 N개만 남기고 나머지는 '그 외'로 합친다
@@ -1258,7 +1274,7 @@ function renderHome() {
     <div class="cards">
       ${urgentTasks(ranged)}
       ${card('유형 묶음 비중', `${rangeLabel()} · 묶음을 누르면 자세히 볼 수 있어요`, donut(groupTotals, { color: groupColor, label: groupLabel, onKey: 'group', count: ranged.length }), { cls: 'span-2' })}
-      ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
+      ${card('요일별 하루 평균', `${rangeLabel()} · 요일마다 하루에 몇 건 들어오는지예요`, weekdayBars(ranged))}
       ${card(`${UNIT_LABEL[unitOf()]}별 상담`, `${rangeLabel()} · 막대 안의 회색 단계는 유형 묶음이에요. 막대를 누르면 그 기간 상담을 볼 수 있어요`, stackedTrend(all, { keys: S.groupOrder }), { cls: 'span-3' })}
       ${card('매장 TOP 8', '상담이 많은 매장이에요. 막대는 유형 묶음 구성이에요', `<ul class="stores">${storeEntries.map(([s, v]) => {
         const comp = sortGroups(Object.entries(countBy(ranged.filter((c) => c.store === s), (c) => c.groups)));
@@ -1338,7 +1354,7 @@ function renderDetail() {
         donut(subEntries, { color: subColor, label: subLabel, onKey: V === 'group' ? 'type' : 'group', count: ranged.length }), { cls: 'span-2' }) : ''}
       ${V === 'store' ? card('이 매장의 세부 유형', '누르면 아래 목록을 거를 수 있어요',
         hbars(Object.entries(countBy(ranged, (c) => c.types)).slice(0, 10), { onKey: 'filter-type', color: (k) => groupColor(groupOf(k)), label: tagLabel, dim: isParent, title: (k) => k })) : ''}
-      ${card('요일별 상담', rangeLabel(), weekdayBars(ranged))}
+      ${card('요일별 하루 평균', `${rangeLabel()} · 요일마다 하루에 몇 건 들어오는지예요`, weekdayBars(ranged))}
       ${storeCard}
       ${card('시간대별 상담', '진할수록 많아요', heatmap(ranged))}
       ${V === 'group' || V === 'type' ? insightCard(ranged, V === 'group' ? K : groupOf(K), '', { resOnly: !!SUBJECTS[V === 'group' ? K : groupOf(K)] }) : insightCard(ranged, MAL_GROUP, '기기 오작동 증상과 처리')}
