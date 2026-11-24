@@ -852,14 +852,14 @@ const SUBJECTS = {
       ['문·투입구가 안 열림', /(문|투입구|보관함)[이가]?\s?(안\s?열|열리지)/],
       ['접수증 미출력·접수 오류', /접수증|접수\s?(중\s?)?오류|출력/],
       ['보관함 비밀번호', /비밀번호/],
-      ['결제 오류', /결제|이중|카드/],
-      ['화면 오류·멈춤', /화면|키오스크|초기화|멈/],
+      ['결제 오류', /결제\s?(오류|실패|안\s?됨|안\s?돼|불가|창)|이중\s?결제|중복\s?결제|카드\s?(인식|오류|단말)/],
+      ['화면 오류·멈춤', /화면|키오스크\s?(오류|멈|먹통|꺼)|초기화|멈춤|멈췄|멈춰/],
     ] },
     { name: '세탁기', tags: ['세탁기오류', '세탁기오류_세제,섬유유연제', '콤보오류'], guess: /세탁기|탈수|세제|유연제/, problems: [
       ['결제 후 작동 안 함', NOT_WORK],
       ['탈수 안 됨', /탈수/],
       ['도중에 멈춤', /멈|중단|정지|안\s?끝/],
-      ['코스·시간 잘못 설정', /코스|시간/],
+      ['코스·시간 잘못 설정', /코스|시간\s?(설정|잘못|다르|오류|미종료)/],
       ['물 넘침·누수·배수', /물\s?넘|누수|배수|급수|물이/],
       ['세제·유연제', byTag(['세탁기오류_세제,섬유유연제'], /세제|유연제|거품/)],
       ['동전·카드 인식', /동전|코인\s?투입\s?오류|미인식|카드\s?인식/],
@@ -931,6 +931,18 @@ const SUBJECTS = {
   ],
 };
 const DOOR_CLOSE = /(투입구|문)[이가]?\s?(먼저\s?)?(닫혀|닫혔|닫힘|닫혀버)|못\s?(꺼내|넣|집)[^.]{0,20}닫|회수\s?(를\s?)?못|나오기\s?전에/;
+// 수거·배송: 일정 문의 / 입고 지연과 그 원인
+const SHIP_ASK = /도착|언제|일정|수령\s?일|당일|며칠/;
+const SHIP_LATE = /지연|늦|미출고|밀려/;
+// 지연 원인: 위에서부터 먼저 맞는 하나만 (겹치지 않게)
+const SHIP_CAUSES = [
+  ['물량·연휴', /물량|연휴|명절|증가|많아|겨울옷|성수기|주말/],
+  ['격일 배송 주기', /격일|배송\s?주기|방문\s?일정|수거\s?일정/],
+  ['세탁 공정·재작업', /바코드|검수|분류|공정|재다림|재케어|재세탁|오염\s?케어|프레스|건조\s?지연|작업\s?(누락|지연)|태그|확인\s?(이\s?)?지연/],
+  ['접수 누락·오배출', /접수증|미동봉|오배출|오매칭|누락/],
+  ['매장 기기·공간', /기기|기계|키오스크|오류|공간|랙|적치|보관함|이불함|배송\s?차량|기사/],
+];
+const lateCause = (c) => { const t = textOf(c); return SHIP_LATE.test(t) ? (SHIP_CAUSES.find(([, re]) => re.test(t))?.[0] || '원인 미기재') : null; };
 Object.assign(SUBJECTS, {
   매장이용: [
     { name: '셀프 세탁 기기', tags: ['코인장비'], guess: /세탁기|건조기|코인|탈수|코스/, problems: [
@@ -973,11 +985,11 @@ Object.assign(SUBJECTS, {
     ] },
   ],
   수거: [
-    { name: '입고 일정', tags: ['매장입고일정', '공장입고일정문의', '수령가능일자문의'], guess: /도착|일정|언제|입고/, problems: [
-      ['도착 일정 문의', /도착|언제|일정|수령\s?일|당일|며칠/],
-      ['물량으로 지연', /지연|물량|늦/],
+    { name: '입고 일정', max: 8, tags: ['매장입고일정', '공장입고일정문의', '수령가능일자문의'], guess: /도착|일정|언제|입고/, problems: [
+      // 지연이 있었던 상담은 '입고 지연 · 원인'으로만 세고, 일정 문의는 지연 없이 일정만 안내한 상담만 센다 (겹치지 않게)
+      ['일정 문의 (지연 없음)', (c) => SHIP_ASK.test(textOf(c)) && !SHIP_LATE.test(textOf(c))],
+      ...[...SHIP_CAUSES.map(([l]) => l), '원인 미기재'].map((l) => [`입고 지연 · ${l}`, (c) => lateCause(c) === l]),
       ['일부만 입고', /일부|분할|1벌|한\s?벌|누락/],
-      ['보관 공간 부족', /공간|랙|적치/],
     ] },
     { name: '입고 지연·미수거', tags: ['입고지연', '미수거'], guess: /지연|미수거/, problems: [
       ['입고 지연', /지연|늦|물량/],
@@ -1089,7 +1101,7 @@ function taskBoard(chats, g) {
   for (const c of mine) { const x = subjectOf(list, c); if (x) groups.get(x).push(c); else unknown++; }
   const OTHER = '그 외';
   const blocks = [...groups].filter(([, cs]) => cs.length).sort((a, b) => b[1].length - a[1].length).map(([x, cs]) => {
-    const probs = x.problems.map(([label, t]) => [label, cs.filter((c) => passes(t, c)).length]).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const probs = x.problems.map(([label, t]) => [label, cs.filter((c) => passes(t, c)).length]).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, x.max || 5);
     const isOther = (c) => textOf(c) && !x.problems.some(([, t]) => passes(t, c));
     const otherN = cs.filter(isOther).length;
     const tip = (k) => {
